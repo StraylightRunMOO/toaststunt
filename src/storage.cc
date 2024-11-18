@@ -38,6 +38,8 @@ refcount_overhead(Memory_Type type)
         /* deal with systems with picky alignment issues */
         case M_LIST:
         case M_TREE:
+            total = sizeof(var_metadata);
+            break;
         case M_TRAV:
         case M_ANON:
         case M_WAIF:

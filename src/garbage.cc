@@ -429,7 +429,7 @@ bf_gc_stats(Var arglist, Byte next, void *vdata, Objid progr)
 
     gc_stats(color);
 
-    Var k, v, r = new_map();
+    Var k, v, r = new_map(0);
 
 #define PACK_COLOR(c, i)    \
     k.type = TYPE_STR;      \

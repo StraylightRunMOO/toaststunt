@@ -153,7 +153,7 @@ bf_pcre_match(Var arglist, Byte next, void *vdata, Objid progr)
     int ovector[oveccount];
 
     /* Set up the MOO variables to store the final value and intermediaries. */
-    Var named_groups = new_map();
+    Var named_groups = new_map(0);
     Var ret = new_list(0);
 
     /* Variables pertaining to the main execution loop */
@@ -223,7 +223,7 @@ bf_pcre_match(Var arglist, Byte next, void *vdata, Objid progr)
                     int n = (tabptr[0] << 8) | tabptr[1];
                     /* Create a list of indices for the substring */
                     Var pos = result_indices(ovector, n);
-                    Var result = new_map();
+                    Var result = new_map(0);
                     int substring_size = ovector[2 * n + 1] - ovector[2 * n];
                     result = mapinsert(result, var_ref(position), pos);
 
@@ -250,7 +250,7 @@ bf_pcre_match(Var arglist, Byte next, void *vdata, Objid progr)
                 pcre_get_substring(subject, ovector, rc, i, &(matched_substring));
                 Var pos = result_indices(ovector, i);
 
-                Var result = new_map();
+                Var result = new_map(0);
                 result = mapinsert(result, var_ref(position), pos);
                 result = mapinsert(result, var_ref(match), str_dup_to_var(matched_substring));
                 pcre_free_substring(matched_substring);
@@ -269,7 +269,7 @@ bf_pcre_match(Var arglist, Byte next, void *vdata, Objid progr)
         }
 
         ret = listappend(ret, named_groups);
-        named_groups = new_map();
+        named_groups = new_map(0);
 
         /* Only loop a single time without /g */
         if (!(flags & FIND_ALL) && loops == 1)

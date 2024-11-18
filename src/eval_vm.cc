@@ -109,7 +109,7 @@ read_vm(int task_id)
     if (dbio_input_version >= DBV_TaskLocal)
         local = dbio_read_var();
     else
-        local = new_map();
+        local = new_map(0);
 
     if (dbio_scanf("%u %d %u%c", &top, &vector, &func_id, &c) != 4
             || (c == ' '

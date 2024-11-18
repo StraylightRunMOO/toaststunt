@@ -28,646 +28,167 @@
  *****************************************************************************/
 
 #include <assert.h>
-
 #include <string.h>
 
+#include "options.h"
 #include "functions.h"
 #include "list.h"
 #include "log.h"
 #include "map.h"
 #include "server.h"
+#include "streams.h"
 #include "storage.h"
 #include "structures.h"
 #include "utils.h"
 
-/*
-  Red Black balanced tree library
+#include "dependencies/hashmap.h"
 
-    > Created (Julienne Walker): August 23, 2003
-    > Modified (Julienne Walker): March 14, 2008
+#define SEED0 (entry->key.type + 1) * 1099511627776
+#define SEED1 MAP_HASH_SEED1
+#define HASH_FN MAP_HASH_FUNCTION
 
-  This code is in the public domain. Anyone may
-  use it or change it in any way that they see
-  fit. The author assumes no responsibility for
-  damages incurred through use of the original
-  code or any variations thereof.
-
-  It is requested, but not required, that due
-  credit is given to the original author and
-  anyone who has modified the code through a
-  header comment, such as this one.
-*/
-
-#define HEIGHT_LIMIT 64     /* Tallest allowable tree */
-
-struct rbtree {
-    rbnode *root;       /* Top of the tree */
-    size_t size;        /* Number of items */
-};
-
-struct rbnode {
-    Var key;
-    Var value;
-    int red;            /* Color (1=red, 0=black) */
-    rbnode *link[2];        /* Left (0) and right (1) links */
-};
-
-struct rbtrav {
-    rbtree *tree;       /* Paired tree */
-    rbnode *it;         /* Current node */
-    rbnode *path[HEIGHT_LIMIT]; /* Traversal path */
-    size_t top;         /* Top of stack */
-};
-
-static int
-node_compare(const rbnode *node1, const rbnode *node2, int case_matters)
+static inline void*
+map_malloc(size_t size, bool is_map)
 {
-    return compare(node1->key, node2->key, case_matters);
+    return mymalloc(size, is_map ? M_TREE : M_STRUCT);
 }
 
-static void
-node_free_data(const rbnode *node)
+static inline void*
+map_realloc(void *ptr, size_t size, bool is_map)
 {
-    free_var(node->key);
-    free_var(node->value);
+    return myrealloc(ptr, size, is_map ? M_TREE : M_STRUCT);
 }
 
-/*
- * Returns 1 for a red node, 0 for a black node.
- */
-static int
-is_red(const rbnode *root)
+static inline void
+map_free(void *ptr, bool is_map)
 {
-    return root != nullptr && root->red == 1;
+    if(!is_map)
+        myfree(ptr, is_map ? M_TREE : M_STRUCT);
 }
 
-/*
- * Performs a single red black rotation in the specified direction.
- * Assumes that all nodes are valid for a rotation.
- *
- * `dir' is the direction to rotate (0 = left, 1 = right).
- */
-static rbnode *
-rbsingle(rbnode *root, int dir)
+int
+map_compare(const void *a, const void *b, void *udata)
 {
-    rbnode *save = root->link[!dir];
+    Var lhs = ((const map_entry*)a)->key;
+    Var rhs = ((const map_entry*)b)->key;
 
-    root->link[!dir] = save->link[dir];
-    save->link[dir] = root;
+    if (lhs.type != rhs.type)
+        return 1;
 
-    root->red = 1;
-    save->red = 0;
-
-    return save;
-}
-
-/*
- * Performs a double red black rotation in the specified direction.
- * Assumes that all nodes are valid for a rotation.
- *
- * `dir' is the direction to rotate (0 = left, 1 = right).
- */
-static rbnode *
-rbdouble(rbnode *root, int dir)
-{
-    root->link[!dir] = rbsingle(root->link[!dir], !dir);
-
-    return rbsingle(root, dir);
-}
-
-/*
- * Creates and initializes a new red black node with a copy of the
- * data.  This function does not insert the new node into a tree.
- */
-static rbnode *
-new_node(rbtree *tree, Var key, Var value)
-{
-    rbnode *rn = (rbnode *)mymalloc(sizeof * rn, M_NODE);
-
-    if (rn == nullptr)
-        return nullptr;
-
-    rn->red = 1;
-    rn->key = key;
-    rn->value = value;
-    rn->link[0] = rn->link[1] = nullptr;
-
-    return rn;
-}
-
-/*
- * Creates and initializes an empty red black tree.  The returned
- * pointer must be released with `rbdelete'.
- */
-static rbtree *
-rbnew(void)
-{
-    rbtree *rt = (rbtree *)mymalloc(sizeof * rt, M_TREE);
-
-    if (rt == nullptr)
-        return nullptr;
-
-    rt->root = nullptr;
-    rt->size = 0;
-
-    return rt;
-}
-
-/*
- * Releases a valid red black tree.
- */
-static void
-rbdelete(rbtree *tree)
-{
-    rbnode *it = tree->root;
-    rbnode *save;
-
-    /*
-       Rotate away the left links so that
-       we can treat this like the destruction
-       of a linked list
-     */
-    while (it != nullptr) {
-        if (it->link[0] == nullptr) {
-            /* No left links, just kill the node and move on */
-            save = it->link[1];
-            node_free_data(it);
-            myfree(it, M_NODE);
-        } else {
-            /* Rotate away the left link and check again */
-            save = it->link[0];
-            it->link[0] = save->link[1];
-            save->link[1] = it;
-        }
-
-        it = save;
-    }
-
-    /* Since this map could possibly be the root of a cycle, final
-     * destruction is handled in the garbage collector if garbage
-     * collection is enabled.
-     */
-#ifndef ENABLE_GC
-    myfree(tree, M_TREE);
-#endif
-}
-
-/*
- * Searches for a copy of the specified node data in a red black tree.
- * Returns a pointer to the data value stored in the tree, or a null
- * pointer if no data could be found.
- */
-static rbnode *
-rbfind(rbtree *tree, rbnode *node, int case_matters)
-{
-    rbnode *it = tree->root;
-
-    while (it != nullptr) {
-        int cmp = node_compare(it, node, case_matters);
-
-        if (cmp == 0)
+    switch (lhs.type) {
+        case TYPE_INT:
+            return lhs.v.num != rhs.v.num;
+        case TYPE_OBJ:
+            return lhs.v.obj != rhs.v.obj;
+        case TYPE_ERR:
+            return lhs.v.err != rhs.v.err;
+        case TYPE_STR:
+            return strcmp(lhs.v.str, rhs.v.str);
+        case TYPE_FLOAT:
+            return std::fabs(lhs.v.fnum - rhs.v.fnum) < EPSILON;
+        case TYPE_BOOL:
+            return lhs.v.truth != rhs.v.truth;
+        default:
             break;
-
-        /*
-           If the tree supports duplicates, they should be
-           chained to the right subtree for this to work
-         */
-        if (case_matters) {
-            /* The tree is built without case sensitivity. So if we try to
-             * navigate with case_matters, we will skip things and ultimately get
-             * incorrect results. So in lieu of a smarter solution, compare again
-             * without case sensitivity for the purposes of navigation. */
-            cmp = node_compare(it, node, 0);
-        }
-        it = it->link[cmp < 0];
     }
-
-    return it;
-}
-
-/*
- * Searches for a copy of the specified node data in a red black tree.
- * Returns a new traversal object initialized to start at the
- * specified node, or a null pointer if no data could be found.  The
- * pointer must be released with `rbtdelete'.
- */
-static rbtrav *
-rbseek(rbtree *tree, rbnode *node, int case_matters)
-{
-    rbtrav *trav = (rbtrav *)mymalloc(sizeof(rbtrav), M_TRAV);
-
-    trav->tree = tree;
-    trav->it = tree->root;
-    trav->top = 0;
-
-    while (trav->it != nullptr) {
-        int cmp = node_compare(trav->it, node, case_matters);
-
-        if (cmp == 0)
-            break;
-
-        /*
-           If the tree supports duplicates, they should be
-           chained to the right subtree for this to work
-         */
-        trav->path[trav->top++] = trav->it;
-        trav->it = trav->it->link[cmp < 0];
-    }
-
-    if (trav->it == nullptr) {
-        myfree(trav, M_TRAV);
-        trav = nullptr;
-    }
-
-    return trav;
-}
-
-/*
- * Inserts a copy of the user-specified data into a red black tree.
- * Returns 1 if the value was inserted successfully, 0 if the
- * insertion failed for any reason.
- */
-static int
-rbinsert(rbtree *tree, rbnode *node)
-{
-    if (tree->root == nullptr) {
-        /*
-           We have an empty tree; attach the
-           new node directly to the root
-         */
-        tree->root = new_node(tree, node->key, node->value);
-
-        if (tree->root == nullptr)
-            return 0;
-    } else {
-        rbnode head = {};   /* False tree root */
-        rbnode *g, *t;      /* Grandparent & parent */
-        rbnode *p, *q;      /* Iterator & parent */
-        int dir = 0, last = 0;
-
-        /* Set up our helpers */
-        t = &head;
-        g = p = nullptr;
-        q = t->link[1] = tree->root;
-
-        /* Search down the tree for a place to insert */
-        for (;;) {
-            if (q == nullptr) {
-                /* Insert a new node at the first null link */
-                p->link[dir] = q = new_node(tree, node->key, node->value);
-
-                if (q == nullptr)
-                    return 0;
-            } else if (is_red(q->link[0]) && is_red(q->link[1])) {
-                /* Simple red violation: color flip */
-                q->red = 1;
-                q->link[0]->red = 0;
-                q->link[1]->red = 0;
-            }
-
-            if (is_red(q) && is_red(p)) {
-                /* Hard red violation: rotations necessary */
-                int dir2 = t->link[1] == g;
-
-                if (q == p->link[last])
-                    t->link[dir2] = rbsingle(g, !last);
-                else
-                    t->link[dir2] = rbdouble(g, !last);
-            }
-
-            /*
-               Stop working if we inserted a node. This
-               check also disallows duplicates in the tree
-             */
-            if (node_compare(q, node, 0) == 0)
-                break;
-
-            last = dir;
-            dir = node_compare(q, node, 0) < 0;
-
-            /* Move the helpers down */
-            if (g != nullptr)
-                t = g;
-
-            g = p, p = q;
-            q = q->link[dir];
-        }
-
-        /* Update the root (it may be different) */
-        tree->root = head.link[1];
-    }
-
-    /* Make the root black for simplified logic */
-    tree->root->red = 0;
-    ++tree->size;
 
     return 1;
 }
 
-/*
- * Removes a node from a red black tree that matches the
- * user-specified data.  Returns 1 if the value was removed
- * successfully, 0 if the removal failed for any reason.
-*/
-static int
-rberase(rbtree *tree, rbnode *node)
+uint64_t 
+map_hash(const void *item, uint64_t seed0, uint64_t seed1)
 {
-    int ret = 1;
+    const map_entry *entry = (const map_entry*)item;
 
-    if (tree->root == nullptr) {
-        return 0;
-    } else {
-        rbnode head = {};   /* False tree root */
-        rbnode *q, *p, *g;  /* Helpers */
-        rbnode *f = nullptr;    /* Found item */
-        int dir = 1;
-
-        /* Set up our helpers */
-        q = &head;
-        g = p = nullptr;
-        q->link[1] = tree->root;
-
-        /*
-           Search and push a red node down
-           to fix red violations as we go
-         */
-        while (q->link[dir] != nullptr) {
-            int last = dir;
-
-            /* Move the helpers down */
-            g = p, p = q;
-            q = q->link[dir];
-            dir = node_compare(q, node, 0) < 0;
-
-            /*
-               Save the node with matching data and keep
-               going; we'll do removal tasks at the end
-             */
-            if (node_compare(q, node, 0) == 0)
-                f = q;
-
-            /* Push the red node down with rotations and color flips */
-            if (!is_red(q) && !is_red(q->link[dir])) {
-                if (is_red(q->link[!dir]))
-                    p = p->link[last] = rbsingle(q, dir);
-                else if (!is_red(q->link[!dir])) {
-                    rbnode *s = p->link[!last];
-
-                    if (s != nullptr) {
-                        if (!is_red(s->link[!last])
-                                && !is_red(s->link[last])) {
-                            /* Color flip */
-                            p->red = 0;
-                            s->red = 1;
-                            q->red = 1;
-                        } else {
-                            int dir2 = g->link[1] == p;
-
-                            if (is_red(s->link[last]))
-                                g->link[dir2] = rbdouble(p, last);
-                            else if (is_red(s->link[!last]))
-                                g->link[dir2] = rbsingle(p, last);
-
-                            /* Ensure correct coloring */
-                            q->red = g->link[dir2]->red = 1;
-                            g->link[dir2]->link[0]->red = 0;
-                            g->link[dir2]->link[1]->red = 0;
-                        }
-                    }
-                }
-            }
-        }
-
-        /* Replace and remove the saved node */
-        if (f != nullptr) {
-            node_free_data(f);
-            f->key = q->key;
-            f->value = q->value;
-            p->link[p->link[1] == q] = q->link[q->link[0] == nullptr];
-            myfree(q, M_NODE);
-
-            --tree->size;
-        } else
-            ret = 0;
-
-        /* Update the root (it may be different) */
-        tree->root = head.link[1];
-
-        /* Make the root black for simplified logic */
-        if (tree->root != nullptr)
-            tree->root->red = 0;
+    switch (entry->key.type) {
+    case TYPE_STR:
+        return HASH_FN(entry->key.v.str, memo_strlen(entry->key.v.str), SEED0, SEED1);
+    case TYPE_INT:
+    return HASH_FN(&(entry->key.v.num), sizeof(Num), SEED0, SEED1);
+    case TYPE_FLOAT:
+        return HASH_FN(&(entry->key.v.fnum), sizeof(double), SEED0, SEED1);
+    case TYPE_OBJ:
+        return HASH_FN(&(entry->key.v.obj), sizeof(Objid), SEED0, SEED1);
+    case TYPE_ERR:
+        return HASH_FN(&(entry->key.v.err), sizeof(enum error), SEED0, SEED1);
+    case TYPE_BOOL:
+        return HASH_FN(&(entry->key.v.truth), sizeof(bool), SEED0, SEED1);
+    default:
+    break;
     }
 
-    return ret;
+    return 0;
 }
 
-/*
- * Creates a new traversal object.  The traversal object is not
- * initialized until `rbtfirst' or `rbtlast' are called.  The
- * pointer must be released with `rbtdelete'.
- */
-static rbtrav *
-rbtnew(void)
+void
+map_element_free(void *item)
 {
-    return (rbtrav *)mymalloc(sizeof(rbtrav), M_TRAV);
+    map_entry *entry = (map_entry*)item;
+    free_var(entry->key);
+    free_var(entry->value);
 }
 
-/*
- * Releases a traversal object.
- */
-static void
-rbtdelete(rbtrav *trav)
-{
-    myfree(trav, M_TRAV);
-}
-
-/*
- * Initializes a traversal object. The user-specified direction
- * determines whether to begin traversal at the smallest or largest
- * valued node.  `dir' is the direction to traverse (0 = ascending, 1
- * = descending).
- */
-static rbnode *
-rbstart(rbtrav *trav, rbtree *tree, int dir)
-{
-    trav->tree = tree;
-    trav->it = tree->root;
-    trav->top = 0;
-
-    /* Save the path for later traversal */
-    if (trav->it != nullptr) {
-        while (trav->it->link[dir] != nullptr) {
-            trav->path[trav->top++] = trav->it;
-            trav->it = trav->it->link[dir];
-        }
-    }
-
-    return trav->it == nullptr ? nullptr : trav->it;
-}
-
-/*
- * Traverses a red black tree in the user-specified direction.  `dir'
- * is the direction to traverse (0 = ascending, 1 = descending).
- * Returns a pointer to the next data value in the specified
- * direction.
- */
-static rbnode *
-rbmove(rbtrav *trav, int dir)
-{
-    if (trav->it->link[dir] != nullptr) {
-        /* Continue down this branch */
-        trav->path[trav->top++] = trav->it;
-        trav->it = trav->it->link[dir];
-
-        while (trav->it->link[!dir] != nullptr) {
-            trav->path[trav->top++] = trav->it;
-            trav->it = trav->it->link[!dir];
-        }
-    } else {
-        /* Move to the next branch */
-        rbnode *last;
-
-        do {
-            if (trav->top == 0) {
-                trav->it = nullptr;
-                break;
-            }
-
-            last = trav->it;
-            trav->it = trav->path[--trav->top];
-        } while (last == trav->it->link[dir]);
-    }
-
-    return trav->it == nullptr ? nullptr : trav->it;
-}
-
-/*
- * Initializes a traversal object to the smallest valued node.
- */
-static rbnode *
-rbtfirst(rbtrav *trav, rbtree *tree)
-{
-    return rbstart(trav, tree, 0);  /* Min value */
-}
-
-/*
- * Initializes a traversal object to the largest valued node.
- */
-static rbnode *
-rbtlast(rbtrav *trav, rbtree *tree)
-{
-    return rbstart(trav, tree, 1);  /* Max value */
-}
-
-/*
- * Traverses to the next value in ascending order.
- */
-static rbnode *
-rbtnext(rbtrav *trav)
-{
-    return rbmove(trav, 1); /* Toward larger items */
-}
-
-/*
- * Traverses to the next value in descending order.
- */
-static rbnode *
-rbtprev(rbtrav *trav)
-{
-    return rbmove(trav, 0); /* Toward smaller items */
-}
-
-/********/
+static Var emptymap;
 
 static Var
-empty_map(void)
+empty_map()
 {
-    Var map;
-    rbtree *tree;
-
-    if ((tree = rbnew()) == nullptr)
-        panic_moo("EMPTY_MAP: rbnew failed");
-
-    map.type = TYPE_MAP;
-    map.v.tree = tree;
-
-    return map;
+    if(emptymap.v.map == nullptr) {
+        emptymap.v.map = hashmap_new_with_allocator(map_malloc, map_realloc, map_free,
+            sizeof(map_entry), 0, 0, 0, map_hash, map_compare, map_element_free, NULL);
+        emptymap.type = TYPE_MAP;
+    }
+    return var_ref(emptymap);
 }
 
 Var
-new_map(void)
+new_map(size_t size)
 {
-    static Var map;
-
-    if (map.v.tree == nullptr)
+    Var map;
+    if(size == 0) {
         map = empty_map();
+    } else {
+        map.v.map = hashmap_new_with_allocator(map_malloc, map_realloc, map_free, 
+            sizeof(map_entry), size, 0, 0, map_hash, map_compare, map_element_free, NULL);
+        map.type = TYPE_MAP;
+    }
 
 #ifdef ENABLE_GC
-    assert(gc_get_color(map.v.tree) == GC_GREEN);
+    assert(gc_get_color(map.v.map) == GC_GREEN);
 #endif
-
-    addref(map.v.tree);
 
     return map;
 }
 
 /* called from utils.c */
-void
+bool
 destroy_map(Var map)
 {
-    rbdelete(map.v.tree);
+    if(map.v.map == emptymap.v.map)
+        return false;
+
+    //hashmap_free(map.v.map);
+    return true;
 }
 
 /* called from utils.c */
 Var
 map_dup(Var map)
 {
-    rbtrav trav;
-    rbnode node;
-    const rbnode *pnode;
-    Var _new = empty_map();
+    Var _new = new_map(maplength(map));
 
-    for (pnode = rbtfirst(&trav, map.v.tree); pnode; pnode = rbtnext(&trav)) {
-        node.key = var_ref(pnode->key);
-        node.value = var_ref(pnode->value);
-        if (!rbinsert(_new.v.tree, &node))
-            panic_moo("MAP_DUP: rbinsert failed");
+    void *item;
+    size_t iter = 1;
+    while (hashmap_iter(map.v.map, &iter, &item, false)) {
+        map_entry _new_entry{.key = var_dup(((map_entry*)item)->value), .value = var_dup(((map_entry*)item)->value)};
+        hashmap_set(_new.v.map, &_new_entry);
     }
+
 #ifdef ENABLE_GC
-    gc_set_color(_new.v.tree, gc_get_color(map.v.tree));
+    gc_set_color(_new.v.map, gc_get_color(map.v.map));
 #endif
 
     return _new;
-}
-
-/* called from utils.c */
-int
-map_sizeof(rbtree *tree)
-{
-#ifdef MEMO_SIZE
-    var_metadata *metadata = ((var_metadata*)tree) - 1;
-#endif
-    rbtrav trav;
-    const rbnode *pnode;
-    int size;
-
-#ifdef MEMO_SIZE
-    if ((size = metadata->size))
-        return size;
-#endif
-
-    size = sizeof(rbtree);
-    for (pnode = rbtfirst(&trav, tree); pnode; pnode = rbtnext(&trav)) {
-        size += sizeof(rbnode) - 2 * sizeof(Var);
-        size += value_bytes(pnode->key);
-        size += value_bytes(pnode->value);
-    }
-
-#ifdef MEMO_SIZE
-    metadata->size = size;
-#endif
-
-    return size;
 }
 
 Var
@@ -682,118 +203,90 @@ mapinsert(Var map, Var key, Var value)
             || (key.is_collection() && TYPE_ANON != key.type))
         panic_moo("MAPINSERT: invalid key");
 
-    Var _new = map;
+    var_ref(key);
+    var_ref(value);
 
-    if (var_refcount(map) > 1) {
-        _new = map_dup(map);
-        free_var(map);
+    map_entry _new_entry{.key = key, .value = value};
+
+    if (var_refcount(map) == 1 && maplength(map) > 0) {
+        hashmap_set(map.v.map, &_new_entry);
+        return map;
     }
 
-#ifdef MEMO_SIZE
-    /* reset the memoized size */
-    var_metadata *metadata = ((var_metadata*)_new.v.tree) - 1;
-    metadata->size = 0;
-#endif
+    size_t size = maplength(map)+1;
+    Var _new = new_map(size);
 
-    rbnode node;
-    node.key = key;
-    node.value = value;
+    void *item;
+    size_t iter = 1;
+    while (hashmap_iter(map.v.map, &iter, &item, false)) {
+        map_entry _entry{.key = (((map_entry*)item)->key), .value = (((map_entry*)item)->value)};
+        hashmap_set(_new.v.map, &_entry);
+    }
 
-    rberase(_new.v.tree, &node);
+    hashmap_set(_new.v.map, &_new_entry);
 
-    if (!rbinsert(_new.v.tree, &node))
-        panic_moo("MAPINSERT: rbinsert failed");
+    free_var(map);
 
 #ifdef ENABLE_GC
-    gc_set_color(_new.v.tree, GC_YELLOW);
+    gc_set_color(_new.v.map, GC_YELLOW);
+#endif
+
+#ifdef MEMO_SIZE
+    // reset the memoized size 
+    var_metadata *metadata = ((var_metadata*)_new.v.map) - 1;
+    metadata->size = 0;
 #endif
 
     return _new;
 }
 
-const rbnode *
-mapstrlookup(Var map, const char *key, Var *value, int case_matters)
+int mapequal(Var lhs, Var rhs, int case_matters)
 {
-    Var tmp;
-    tmp.type = TYPE_STR;
-    tmp.v.str = key;
-
-    return maplookup(map, tmp, value, case_matters);
+    return 0; // TODO
 }
 
-const rbnode *
-maplookup(Var map, Var key, Var *value, int case_matters)
-{   /* does NOT consume `map' or `'key',
-       does NOT increment the ref count on `value' */
-    rbnode node;
-    const rbnode *pnode;
-
-    node.key = key;
-    pnode = rbfind(map.v.tree, &node, case_matters);
-    if (pnode && value)
-        *value = pnode->value;
-
-    return pnode;
+Num maplength(Var map)
+{
+    return hashmap_count(map.v.map);
 }
 
-/* Seeks to the item with the specified key in the specified map and
- * returns an iterator value for the map starting at that key.
- */
+int mapempty(Var map)
+{
+    return maplength(map) == 0;
+}
+
+Num mapbuckets(Var map)
+{
+    return hashmap_nbuckets(map.v.map);
+}
+
 int
-mapseek(Var map, Var key, Var *iter, int case_matters)
-{   /* does NOT consume `map' or `'key',
-       ALWAYS returns a newly allocated value in `iter' */
-    rbnode node;
-    rbtrav *ptrav;
+map_sizeof(Var map)
+{
+    #ifdef MEMO_SIZE
+        var_metadata *metadata = ((var_metadata*)map.v.map) - 1;
+    #endif
+        
+    int len, size;
 
-    node.key = key;
-    ptrav = rbseek(map.v.tree, &node, case_matters);
-    if (ptrav && iter) {
-        iter->type = TYPE_ITER;
-        iter->v.trav = ptrav;
-    } else if (iter) {
-        *iter = none;
+    #ifdef MEMO_SIZE
+        if ((size = metadata->size))
+            return size;
+    #endif
+
+    size = sizeof(map.v.map);
+    size_t iter = 1;
+    map_entry *item;
+    while (hashmap_iter(map.v.map, &iter, (void**)&item, false)) {
+        size += value_bytes(item->key);
+        size += value_bytes(item->value);
     }
 
-    return ptrav != nullptr;
-}
+    #ifdef MEMO_SIZE
+        metadata->size = size;
+    #endif
 
-int
-mapequal(Var lhs, Var rhs, int case_matters)
-{
-    rbtrav trav_lhs, trav_rhs;
-    const rbnode *pnode_lhs = nullptr, *pnode_rhs = nullptr;
-
-    if (lhs.v.tree == rhs.v.tree)
-        return 1;
-
-    while (1) {
-        pnode_lhs =
-            pnode_lhs == nullptr ? rbtfirst(&trav_lhs, lhs.v.tree)
-            : rbtnext(&trav_lhs);
-        pnode_rhs =
-            pnode_rhs == nullptr ? rbtfirst(&trav_rhs, rhs.v.tree)
-            : rbtnext(&trav_rhs);
-        if (pnode_lhs == nullptr || pnode_rhs == nullptr)
-            break;
-        if (!equality(pnode_lhs->key, pnode_rhs->key, case_matters)
-                || !equality(pnode_lhs->value, pnode_rhs->value, case_matters))
-            break;
-    }
-
-    return pnode_lhs == nullptr && pnode_rhs == nullptr;
-}
-
-int
-mapempty(Var map)
-{
-    return map.v.tree->size == 0;
-}
-
-Num
-maplength(Var map)
-{
-    return map.v.tree->size;
+    return size;
 }
 
 /* Iterate over the map, calling the function `func' once per
@@ -804,14 +297,14 @@ maplength(Var map)
 int
 mapforeach(Var map, mapfunc func, void *data)
 {   /* does NOT consume `map' */
-    rbtrav trav;
-    const rbnode *pnode;
-    int first = 1;
     int ret;
+    int first = 1;
+    size_t iter = 1;
+    map_entry *item;
 
-    for (pnode = rbtfirst(&trav, map.v.tree); pnode; pnode = rbtnext(&trav)) {
-        if ((ret = (*func)(pnode->key, pnode->value, data, first)))
-            return ret;
+    while (hashmap_iter(map.v.map, &iter, (void**)&item, false)) {
+        ret = func(item->key, item->value, data, first);
+        if (ret) return ret;
         first = 0;
     }
 
@@ -821,67 +314,83 @@ mapforeach(Var map, mapfunc func, void *data)
 int
 mapfirst(Var map, var_pair *pair)
 {
-    rbnode *node = map.v.tree->root;
+    if(hashmap_count(map.v.map) == 0)
+        return 0;
 
-    if (node != nullptr) {
-        while (node->link[0] != nullptr) {
-            node = node->link[0];
-        }
+    size_t iter = 1;
+    map_entry *item;
+    if(hashmap_iter(map.v.map, &iter, (void**)&item, false)) {
+        pair->a = item->key;
+        pair->b = item->value;
+        return 1;
     }
 
-    if (node != nullptr && pair != nullptr) {
-        pair->a = node->key;
-        pair->b = node->value;
-    }
-
-    return node != nullptr;
+    return 0;
 }
 
 int
 maplast(Var map, var_pair *pair)
 {
-    rbnode *node = map.v.tree->root;
+    if(hashmap_count(map.v.map) == 0)
+        return 0;
 
-    if (node != nullptr) {
-        while (node->link[1] != nullptr) {
-            node = node->link[1];
-        }
+    size_t iter = mapbuckets(map) - 1;
+    map_entry *item;
+    if(hashmap_iter(map.v.map, &iter, (void**)&item, true)) {
+        pair->a = item->key;
+        pair->b = item->value;
+        return 1;
     }
 
-    if (node != nullptr && pair != nullptr) {
-        pair->a = node->key;
-        pair->b = node->value;
-    }
-
-    return node != nullptr;
+    return 0;
 }
 
 /* Returns the specified range from the map.  `from' and `to' must be
  * valid iterators for the map or the behavior is unspecified.
  */
 Var
-maprange(Var map, rbtrav *from, rbtrav *to)
+maprange(Var map, int from, int to)
 {   /* consumes `map' */
-    rbnode node;
-    const rbnode *pnode = nullptr;
-    Var _new = empty_map();
+    Var r = new_map(0);
 
-    do {
-        pnode = pnode == nullptr ? from->it : rbtnext(from);
+    if(to > hashmap_count(map.v.map) || from <= 0)
+        return r;
 
-        node.key = var_ref(pnode->key);
-        node.value = var_ref(pnode->value);
-        if (!rbinsert(_new.v.tree, &node))
-            panic_moo("MAP_DUP: rbinsert failed");
-    } while (pnode != to->it);
+    size_t iter = 1;
+    size_t cnt = 0;
+    map_entry *item;
+    while (hashmap_iter(map.v.map, &iter, (void**)&item, false)) {
+        if(++cnt >= from && cnt <= to)
+            mapinsert(r, item->key, item->value);
+    }
 
-    free_var(map);
+    return r;
+}
 
-#ifdef ENABLE_GC
-    gc_set_color(_new.v.tree, GC_YELLOW);
-#endif
+const map_entry*
+maplookup(Var map, Var key, Var *value, int case_matters)
+{
+    map_entry find{.key = key};
 
-    return _new;
+    const map_entry *r = (const map_entry*)hashmap_get(map.v.map, &find);
+
+    if(r == nullptr) return nullptr;
+
+    var_ref(r->key);
+    var_ref(r->value);
+
+    if(value != nullptr) *value = r->value;
+
+    return r;
+}
+
+const map_entry*
+mapstrlookup(Var map, const char *key, Var *value, int case_matters)
+{
+    Var k = str_dup_to_var(key);
+    const map_entry *r = maplookup(map, k, value, case_matters);
+    free_var(k);
+    return r;
 }
 
 /* Replaces the specified range in the map.  `from' and `to' must be
@@ -889,110 +398,34 @@ maprange(Var map, rbtrav *from, rbtrav *to)
  * new map is placed in `new' (`new' is first freed).  Returns
  * `E_NONE' if successful.
  */
-enum error
-maprangeset(Var map, rbtrav *from, rbtrav *to, Var value, Var *_new)
-{   /* consumes `map', `value' */
-    rbtrav trav;
-    rbnode node;
-    const rbnode *pnode = nullptr;
-    enum error e = E_NONE;
+enum error 
+maprangeset(Var map, int from, int to, Var value, Var *_new)
+{
+    if(to > hashmap_count(map.v.map) || from <= 0 || from >= to)
+        return E_RANGE;
 
-    if (_new == nullptr)
-        panic_moo("MAP_DUP: new is NULL");
+    Var r = new_map(0);
 
-    free_var(*_new);
-    *_new = empty_map();
+    map_entry *item;
+    size_t cnt = 0;
+    size_t iter = 1;
+    while (hashmap_iter(map.v.map, &iter, (void**)&item, false))
+        if(++cnt < from || cnt > to)
+            mapinsert(r, item->key, item->value);
 
-    for (pnode = rbtfirst(&trav, map.v.tree); pnode; pnode = rbtnext(&trav)) {
-        if (pnode == from->it)
-            break;
-        node.key = var_ref(pnode->key);
-        node.value = var_ref(pnode->value);
-        if (!rbinsert(_new->v.tree, &node))
-            panic_moo("MAP_DUP: rbinsert failed");
-    }
+    iter = 1;
+    while (hashmap_iter(value.v.map, &iter, (void**)&item, false))
+        mapinsert(r, item->key, item->value);
 
-    for (pnode = rbtfirst(&trav, value.v.tree); pnode; pnode = rbtnext(&trav)) {
-        node.key = var_ref(pnode->key);
-        node.value = var_ref(pnode->value);
-        rberase(_new->v.tree, &node);
-        if (!rbinsert(_new->v.tree, &node))
-            panic_moo("MAP_DUP: rbinsert failed");
-    }
+    *_new = r;
 
-    while ((pnode = rbtnext(to))) {
-        node.key = var_ref(pnode->key);
-        node.value = var_ref(pnode->value);
-        rberase(_new->v.tree, &node);
-        if (!rbinsert(_new->v.tree, &node))
-            panic_moo("MAP_DUP: rbinsert failed");
-    }
-
-    free_var(map);
-    free_var(value);
-
-#ifdef ENABLE_GC
-    gc_set_color(_new->v.tree, GC_YELLOW);
+#ifdef MEMO_SIZE
+    // reset the memoized size 
+    var_metadata *metadata = ((var_metadata*)r.v.map) - 1;
+    metadata->size = 0;
 #endif
 
-    return e;
-}
-
-Var
-new_iter(Var map)
-{
-    Var iter;
-
-    iter.type = TYPE_ITER;
-    if ((iter.v.trav = rbtnew()) == nullptr)
-        panic_moo("NEW_ITER: rbtnew failed");
-
-    rbtfirst(iter.v.trav, map.v.tree);
-
-    return iter;
-}
-
-/* called from utils.c */
-void
-destroy_iter(Var iter)
-{
-    rbtdelete(iter.v.trav);
-}
-
-/* called from utils.c */
-Var
-iter_dup(Var iter)
-{
-    panic_moo("ITER_DUP: don't do this");
-
-    return none;
-}
-
-int
-iterget(Var iter, var_pair *pair)
-{
-    if (iter.v.trav->it) {
-        pair->a = iter.v.trav->it->key;
-        pair->b = iter.v.trav->it->value;
-
-        return 1;
-    }
-
-    return 0;
-}
-
-void
-iternext(Var iter)
-{
-    rbtnext(iter.v.trav);
-}
-
-/* called from execute.c */
-
-void
-clear_node_value(const rbnode *node)
-{
-    ((rbnode *)node)->value.type = TYPE_NONE;
+    return E_NONE;
 }
 
 /**** built in functions ****/
@@ -1000,8 +433,7 @@ clear_node_value(const rbnode *node)
 static package
 bf_mapdelete(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    Var r;
-    Var map = arglist.v.list[1];
+    Var map = var_ref(arglist.v.list[1]);
     Var key = arglist.v.list[2];
 
     if (key.is_collection()) {
@@ -1009,76 +441,64 @@ bf_mapdelete(Var arglist, Byte next, void *vdata, Objid progr)
         return make_error_pack(E_TYPE);
     }
 
-    r = var_refcount(map) == 1 ? var_ref(map) : map_dup(map);
-
 #ifdef MEMO_SIZE
-    /* reset the memoized size */
-    var_metadata *metadata = ((var_metadata*)r.v.tree) - 1;
+    // reset the memoized size 
+    var_metadata *metadata = ((var_metadata*)map.v.map) - 1;
     metadata->size = 0;
 #endif
 
-    rbnode node;
-    node.key = key;
-    if (!rberase(r.v.tree, &node)) {
-        free_var(r);
+    map_entry find{.key = key};
+    if(!hashmap_delete(map.v.map, (const void*)&find)) {
+        free_var(map);
         free_var(arglist);
         return make_error_pack(E_RANGE);
     }
 
     free_var(arglist);
-    return make_var_pack(r);
-}
-
-static int
-do_map_keys(Var key, Var value, void *data, int first)
-{
-    Var *list = (Var *)data;
-    *list = listappend(*list, var_ref(key));
-    return 0;
+    return make_var_pack(map);
 }
 
 static package
 bf_mapkeys(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    Var r = new_list(0);
-    mapforeach(arglist.v.list[1], do_map_keys, &r);
+    Var r = new_list(maplength(arglist.v.list[1]));
+
+    size_t iter = 1;
+    map_entry *item;
+    while (hashmap_iter(arglist.v.list[1].v.map, &iter, (void**)&item, false)) {
+        r = listappend(r, item->key);
+    }
+
     free_var(arglist);
     return make_var_pack(r);
-}
-
-static int
-do_map_values(Var key, Var value, void *data, int first)
-{
-    Var *list = (Var *)data;
-    *list = listappend(*list, var_ref(value));
-    return 0;
 }
 
 static package
 bf_mapvalues(Var arglist, Byte next, void *vdata, Objid progr)
 {
     const auto nargs = arglist.v.list[0].v.num;
+    Var r = new_list(maplength(arglist.v.list[1]));
+
     //nargs==1: simple mapvalues, dump all values of the map.
-    if (nargs == 1)
-    {
-        Var r = new_list(0);
-        mapforeach(arglist.v.list[1], do_map_values, &r);
+    if (nargs == 1) {
+        size_t iter = 1;
+        map_entry *item;
+        while (hashmap_iter(arglist.v.list[1].v.map, &iter, (void**)&item, false)) {
+            r = listappend(r, item->value);
+        }
+
         free_var(arglist);
         return make_var_pack(r);
-    }
-    else
-    {
-        Var r = new_list(0);
-        for (int i = 2; i <= nargs; ++i)
-        {
-            const auto rbnode = maplookup(arglist.v.list[1], arglist.v.list[i], nullptr, true);
-            if (!rbnode)
+    } else {
+        for (int i = 2; i <= nargs; ++i) {
+            const map_entry *value = maplookup(arglist.v.list[1], arglist.v.list[i], nullptr, true);
+            if (value == nullptr)
             {
                 free_var(r);
                 free_var(arglist);
                 return make_error_pack(E_RANGE);
             }
-            r = listappend(r, var_ref(rbnode->value));
+            r = listappend(r, value->value);
         }
         free_var(arglist);
         return make_var_pack(r);
@@ -1098,18 +518,18 @@ bf_maphaskey(Var arglist, Byte next, void *vdata, Objid progr)
     Var ret;
     bool case_matters = arglist.v.list[0].v.num >= 3 && is_true(arglist.v.list[3]);
 
-    ret = Var::new_int(!(maplookup(map, key, nullptr, case_matters) == nullptr));
+    map_entry find{.key = key};
+    ret = Var::new_int(hashmap_get(map.v.map, &find) != nullptr);
 
     free_var(arglist);
     return make_var_pack(ret);
 }
 
-
 void
 register_map(void)
 {
-    register_function("mapdelete", 2, 2, bf_mapdelete, TYPE_MAP, TYPE_ANY);
-    register_function("mapkeys", 1, 1, bf_mapkeys, TYPE_MAP);
+    register_function("mapdelete", 2,  2, bf_mapdelete, TYPE_MAP, TYPE_ANY);
+    register_function("mapkeys",   1,  1, bf_mapkeys,   TYPE_MAP);
     register_function("mapvalues", 1, -1, bf_mapvalues, TYPE_MAP);
-    register_function("maphaskey", 2, 3, bf_maphaskey, TYPE_MAP, TYPE_ANY, TYPE_INT);
+    register_function("maphaskey", 2,  3, bf_maphaskey, TYPE_MAP, TYPE_ANY, TYPE_INT);
 }

@@ -347,7 +347,7 @@ bf_sqlite_info(Var arglist, Byte next, void *vdata, Objid progr)
 
     sqlite_conn *handle = sqlite_connections[index];
 
-    Var ret = new_map();
+    Var ret = new_map(0);
     ret = mapinsert(ret, str_dup_to_var("path"), str_dup_to_var(handle->path));
     ret = mapinsert(ret, str_dup_to_var("parse_types"), Var::new_int(handle->options & SQLITE_PARSE_TYPES ? 1 : 0));
     ret = mapinsert(ret, str_dup_to_var("parse_objects"), Var::new_int(handle->options & SQLITE_PARSE_OBJECTS ? 1 : 0));

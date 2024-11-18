@@ -437,7 +437,7 @@ find_handler_activ(Var code)
 Var
 make_rt_var_map(Var * rt_env, const char **var_names, unsigned size)
 {
-    Var rt_vars = new_map();
+    Var rt_vars = new_map(0);
     int i;
 
     for (i = 0; i < size; ++i) {
@@ -1087,7 +1087,7 @@ do_test:
             {
                 Var map;
 
-                map = new_map();
+                map = new_map(0);
                 PUSH(map);
             }
             break;
@@ -1104,7 +1104,7 @@ do_test:
                     free_var(map);
                     PUSH_TYPE_MISMATCH(8, key.type, TYPE_STR, TYPE_INT, TYPE_OBJ, TYPE_ERR, TYPE_FLOAT, TYPE_ANON, TYPE_WAIF, TYPE_BOOL);
                 } else {
-                    r = mapinsert(map, key, value);
+                    r = mapinsert(map, var_dup(key), var_dup(value));
                     if (value_bytes(r) <= server_int_option_cached(SVO_MAX_MAP_VALUE_BYTES))
                         PUSH(r);
                     else {
@@ -1246,7 +1246,8 @@ do_test:
                             PUSH_ERROR_UNLESS_QUOTA(E_QUOTA);
                         }
                     } else if (list.type == TYPE_MAP) {
-                        Var res = mapinsert(list, index, value);
+                        Var res = mapinsert(list, var_dup(index), var_dup(value));
+
                         if (value_bytes(res) <= server_int_option_cached(SVO_MAX_MAP_VALUE_BYTES))
                             PUSH(res);
                         else {
@@ -1693,14 +1694,12 @@ finish_comparison:
                 list = NEXT_TOP_RT_VALUE;
                 if (list.type == TYPE_MAP) {
                     Var value;
-                    const rbnode *node;
                     if (index.is_collection() && TYPE_ANON != index.type) {
                         PUSH_TYPE_MISMATCH(8, index.type, TYPE_STR, TYPE_INT, TYPE_OBJ, TYPE_ERR, TYPE_FLOAT, TYPE_ANON, TYPE_WAIF, TYPE_BOOL);
-                    } else if (!(node = maplookup(list, index, &value, 0))) {
+                    } else if (maplookup(list, index, &value, 0) == nullptr) {
                         PUSH_ERROR(E_RANGE);
                     } else {
                         PUSH(value);
-                        clear_node_value(node);
                     }
                 } else if (list.type == TYPE_LIST) {
                     if (index.type != TYPE_INT) {
@@ -1750,8 +1749,8 @@ finish_comparison:
                 } else if (base.type == TYPE_MAP) {
                     Var iterfrom, iterto;
                     int rel = compare(from, to, 0);
-                    mapseek(base, from, &iterfrom, 0);
-                    mapseek(base, to, &iterto, 0);
+                    iterfrom = Var::new_int(from.v.num);
+                    iterto = Var::new_int(to.v.num);
                     if ((rel <= 0) && (iterfrom.is_none() || iterto.is_none())) {
                         free_var(to);
                         free_var(from);
@@ -1760,14 +1759,14 @@ finish_comparison:
                         free_var(base);
                         PUSH_ERROR(E_RANGE);
                     } else if (rel > 0) {
-                        PUSH(new_map());
+                        PUSH(new_map(0));
                         free_var(to);
                         free_var(from);
                         free_var(iterto);
                         free_var(iterfrom);
                         free_var(base);
                     } else {
-                        PUSH(maprange(base, iterfrom.v.trav, iterto.v.trav));
+                        PUSH(maprange(base, iterfrom.v.num, iterto.v.num));
                         free_var(from);
                         free_var(to);
                         free_var(iterto);
@@ -2295,8 +2294,8 @@ else if (obj.type == TYPE_##t1) {           \
                         } else if (base.type == TYPE_MAP) {
                             Var res = none;
                             Var iterfrom, iterto;
-                            mapseek(base, from, &iterfrom, 0);
-                            mapseek(base, to, &iterto, 0);
+                            iterfrom = Var::new_int(from.v.num);
+                            iterto = Var::new_int(to.v.num);
                             if (iterfrom.is_none() || iterto.is_none()) {
                                 free_var(to);
                                 free_var(from);
@@ -2306,7 +2305,7 @@ else if (obj.type == TYPE_##t1) {           \
                                 free_var(value);
                                 PUSH_ERROR(E_RANGE);
                             } else {
-                                maprangeset(base, iterfrom.v.trav, iterto.v.trav, value, &res);
+                                maprangeset(base, iterfrom.v.num, iterto.v.num, value, &res);
                                 free_var(to);
                                 free_var(from);
                                 free_var(iterto);
@@ -2640,26 +2639,20 @@ else if (obj.type == TYPE_##t1) {           \
                                 ITER.v.num++;   /* increment iter */
                             }
                         } else if (BASE.type == TYPE_MAP) {
+                            int len = mapbuckets(BASE);
                             if (ITER.type == TYPE_NONE) {
                                 /* starting iteration */
                                 free_var(ITER);
-                                ITER = new_iter(BASE);
-                            } else if (ITER.type != TYPE_ITER) {
-                                /* resuming an iteration after a db load */
-                                Var iter;
-                                mapseek(BASE, ITER, &iter, 0);
-                                free_var(ITER);
-                                ITER = iter;
+                                ITER = Var::new_int(0);
                             }
-                            var_pair pair;
-                            if (ITER.type == TYPE_NONE || !iterget(ITER, &pair)) {
+                            struct map_entry *item;
+                            if(ITER.v.num > len || !hashmap_iter(BASE.v.map, (size_t*)&ITER.v.num, (void**)&item, false)) {
                                 free_var(POP());
                                 free_var(POP());
                                 JUMP(lab);
                             } else {
                                 free_var(RUN_ACTIV.rt_env[id]);
-                                RUN_ACTIV.rt_env[id] = var_ref(pair.b);
-                                iternext(ITER); /* increment iter */
+                                RUN_ACTIV.rt_env[id] = var_ref(item->value);
                             }
                         }
 #           undef ITER
@@ -2704,26 +2697,23 @@ else if (obj.type == TYPE_##t1) {           \
                                 ITER.v.num++;   /* increment iter */
                             }
                         } else if (BASE.type == TYPE_MAP) {
+
+                            int len = mapbuckets(BASE);
                             if (ITER.type == TYPE_NONE) {
+                                /* starting iteration */
                                 free_var(ITER);
-                                ITER = new_iter(BASE);
-                            } else if (ITER.type != TYPE_ITER) {
-                                Var iter;
-                                mapseek(BASE, ITER, &iter, 0);
-                                free_var(ITER);
-                                ITER = iter;
+                                ITER = Var::new_int(0);
                             }
-                            var_pair pair;
-                            if (ITER.type == TYPE_NONE || !iterget(ITER, &pair)) {
+                            map_entry *item;
+                            if(ITER.v.num > len || !hashmap_iter(BASE.v.map, (size_t*)&ITER.v.num, (void**)&item, false)) {
                                 free_var(POP());
                                 free_var(POP());
                                 JUMP(lab);
                             } else {
                                 free_var(RUN_ACTIV.rt_env[id]);
-                                RUN_ACTIV.rt_env[id] = var_ref(pair.b);
+                                RUN_ACTIV.rt_env[id] = var_ref(item->value);
                                 free_var(RUN_ACTIV.rt_env[index]);
-                                RUN_ACTIV.rt_env[index] = var_ref(pair.a);
-                                iternext(ITER); /* increment iter */
+                                RUN_ACTIV.rt_env[index] = var_ref(item->key);
                             }
                         }
 #           undef ITER
@@ -3059,7 +3049,7 @@ run_interpreter(char raise, enum error e,
     const char *verb = str_ref(RUN_ACTIV.verbname);
 
 #ifdef SAVE_FINISHED_TASKS
-    Var postmortem = new_map();
+    Var postmortem = new_map(0);
 
     postmortem = mapinsert(postmortem, var_ref(map_this), var_ref(RUN_ACTIV._this));
     postmortem = mapinsert(postmortem, var_ref(map_player), Var::new_obj(RUN_ACTIV.player));

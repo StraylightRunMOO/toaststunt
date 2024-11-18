@@ -335,7 +335,7 @@ static int
 handle_end_map(void *ctx)
 {
     struct parse_context *pctx = (struct parse_context *)ctx;
-    Var map = new_map();
+    Var map = new_map(0);
     Var k, v;
     for (v = POP(pctx->top), k = POP(pctx->top);
             (int)v.type > MAP_SENTINEL && (int)k.type > MAP_SENTINEL;

@@ -3056,7 +3056,7 @@ bf_connection_info(Var arglist, Byte next, void *vdata, Objid progr)
 
     lock_connection_name_mutex(nh);
 
-    Var ret = new_map();
+    Var ret = new_map(9);
     ret = mapinsert(ret, var_ref(src_addr), str_dup_to_var(network_source_connection_name(nh)));
     ret = mapinsert(ret, var_ref(src_port), Var::new_int(network_source_port(nh)));
     ret = mapinsert(ret, var_ref(src_ip), str_dup_to_var(network_source_ip_address(nh)));
@@ -3217,12 +3217,12 @@ bf_listeners(Var arglist, Byte next, void *vdata, Objid progr)
 
 // Save the keys for later
     static const Var object = str_dup_to_var("object");
-    static const Var port = str_dup_to_var("port");
-    static const Var print = str_dup_to_var("print-messages");
+    static const Var port   = str_dup_to_var("port");
+    static const Var print  = str_dup_to_var("print-messages");
 
     for (l = all_slisteners; l; l = l->next) {
         if (!find_listener || equality(find, (find.type == TYPE_OBJ) ? Var::new_obj(l->oid) : l->desc, 0)) {
-            entry = new_map();
+            entry = new_map(6);
             entry = mapinsert(entry, var_ref(object), Var::new_obj(l->oid));
             entry = mapinsert(entry, var_ref(port), var_ref(l->desc));
             entry = mapinsert(entry, var_ref(print), Var::new_int(l->print_messages));

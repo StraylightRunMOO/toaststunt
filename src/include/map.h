@@ -27,37 +27,42 @@
   policies, either expressed or implied, of Todd Sundsted.
  *****************************************************************************/
 
-#include "structures.h"
 
-extern Var new_map(void);
-extern void destroy_map(Var map);
+#ifndef MAP_H
+#define MAP_H 1
+
+#include "structures.h"
+#include "hashmap.h"
+
+typedef struct map_entry {
+    Var key;
+    Var value;
+} map_entry;
+
+extern Var new_map(size_t size);
+extern bool destroy_map(Var map);
 extern Var map_dup(Var map);
 
 extern Var mapinsert(Var map, Var key, Var value);
-extern const rbnode *maplookup(Var map, Var key, Var *value, int case_matters);
-extern const rbnode *mapstrlookup(Var map, const char *key, Var *value, int case_matters);
+extern const map_entry *maplookup(Var map, Var key, Var *value, int case_matters);
+extern const map_entry *mapstrlookup(Var map, const char *key, Var *value, int case_matters);
 extern int mapseek(Var map, Var key, Var *iter, int case_matters);
 extern int mapequal(Var lhs, Var rhs, int case_matters);
 extern Num maplength(Var map);
 extern int mapempty(Var map);
+extern Num mapbuckets(Var map);
 
-extern int map_sizeof(rbtree *tree);
+extern int map_sizeof(Var map);
 
 extern int mapfirst(Var map, var_pair *pair);
 extern int maplast(Var map, var_pair *pair);
 
-extern Var new_iter(Var map);
-extern void destroy_iter(Var iter);
-extern Var iter_dup(Var iter);
-
-extern int iterget(Var iter, var_pair *pair);
-extern void iternext(Var iter);
-
-extern Var maprange(Var map, rbtrav *from, rbtrav *to);
-extern enum error maprangeset(Var map, rbtrav *from, rbtrav *to, Var value, Var *_new);
+extern Var maprange(Var map, int from, int to);
+extern enum error maprangeset(Var map, int from, int to, Var value, Var *_new);
 
 typedef int (*mapfunc) (Var key, Var value, void *data, int first);
 extern int mapforeach(Var map, mapfunc func, void *data);
+
 
 /* You're never going to need to use this!
  * Clears a node in place by setting the associated value type to
@@ -68,3 +73,5 @@ extern int mapforeach(Var map, mapfunc func, void *data);
  * guarantee that a nested map is not shared.
  */
 extern void clear_node_value(const rbnode *node);
+
+#endif

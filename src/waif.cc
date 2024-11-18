@@ -624,7 +624,7 @@ bf_waif_stats(Var arglist, Byte next, void *vdata, Objid progr)
 {
     free_var(arglist);
 
-    Var r = new_map();
+    Var r = new_map(0);
     r = mapinsert(r, str_dup_to_var("total"), Var::new_int(waif_count));
     r = mapinsert(r, str_dup_to_var("pending_recycle"), Var::new_int(destroyed_waifs.size()));
 
@@ -840,7 +840,9 @@ waif_bytes(Waif *w)
      * be sharing that with the class object which is billed for that
      * space
      */
-    len = sizeof(Waif);
+    //len = sizeof(Waif);
+    len = sizeof(*w);
+    oklog("SIZE OF *w: %d\n", len);
     cnt = count_waif_propvals(w);
     while (cnt--)
         len += value_bytes(w->propvals[cnt]);

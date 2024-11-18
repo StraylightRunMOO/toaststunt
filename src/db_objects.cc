@@ -206,7 +206,7 @@ db_init_object(Object *o)
     o->children = new_list(0);
 
     o->location = var_ref(nothing);
-    o->last_move = (clear_last_move ? var_ref(zero) : new_map());
+    o->last_move = (clear_last_move ? var_ref(zero) : new_map(0));
     o->contents = new_list(0);
 
     o->propval = nullptr;
@@ -1067,7 +1067,7 @@ db_change_location(Objid oid, Objid new_location, int position)
     if (!clear_last_move) {
         if (objects[oid]->last_move.type != TYPE_MAP) {
             free_var(objects[oid]->last_move);
-            objects[oid]->last_move = new_map();
+            objects[oid]->last_move = new_map(0);
         }
 
         Var last_move = objects[oid]->last_move;

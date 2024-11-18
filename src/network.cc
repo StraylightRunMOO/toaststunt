@@ -1631,7 +1631,7 @@ tls_connection_info(const network_handle nh)
     static Var active_key_name = str_dup_to_var("active");
     static Var tls_version = str_dup_to_var("version");
     const nhandle *h = (nhandle *)nh.ptr;
-    Var ret = new_map();
+    Var ret = new_map(3);
 
     ret = mapinsert(ret, var_ref(active_key_name), Var::new_int(h->tls != nullptr));
     if (h->tls) {
@@ -1657,8 +1657,8 @@ network_set_connection_binary(network_handle nh, bool do_binary)
            network_set_client_echo(nh, is_true(value));         \
            )                                                    \
                                                                 \
-    DEFINE(keep-alive, _, TYPE_MAP, tree,                       \
-            network_keep_alive_map(nh).v.tree,                  \
+    DEFINE(keep-alive, _, TYPE_MAP, map,                        \
+            network_keep_alive_map(nh).v.map,                   \
             {                                                   \
                 if (!network_set_client_keep_alive(nh, value))  \
                     return 0;                                   \
@@ -1690,7 +1690,7 @@ network_keep_alive_map(network_handle nh)
 {
     nhandle *h = (nhandle*)nh.ptr;
 
-    Var ret = new_map();
+    Var ret = new_map(0);
     ret = mapinsert(ret, str_dup_to_var("enabled"), Var::new_int(h->keep_alive));
     ret = mapinsert(ret, str_dup_to_var("idle"), Var::new_int(h->keep_alive_idle));
     ret = mapinsert(ret, str_dup_to_var("interval"), Var::new_int(h->keep_alive_interval));

@@ -339,7 +339,7 @@ ng_read_object(int anonymous)
             o->last_move = dbio_read_var();
         }
     else
-        o->last_move = new_map();
+        o->last_move = new_map(0);
 
     o->contents = dbio_read_var();
 
@@ -774,7 +774,7 @@ v4_upgrade_objects()
                 _new->children = listappend(_new->children, var_dup(Var::new_obj(iter)));
 
             _new->location = var_dup(Var::new_obj(o->location));
-            _new->last_move = new_map();
+            _new->last_move = new_map(0);
 
             _new->contents = new_list(0);
             for (iter = o->contents; iter != NOTHING; iter = objects[iter]->next)

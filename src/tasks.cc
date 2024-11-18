@@ -1483,7 +1483,7 @@ static int
 on_message_begin_callback(http_parser *parser)
 {
     struct http_parsing_state *state = (struct http_parsing_state *)parser;
-    state->result = new_map();
+    state->result = new_map(0);
     return 0;
 }
 
@@ -1500,7 +1500,7 @@ maybe_complete_header(struct http_parsing_state *state)
 {
     if (state->headers.type != TYPE_MAP) {
         free_var(state->headers);
-        state->headers = new_map();
+        state->headers = new_map(0);
     }
 
     if (state->header_value_under_constr.type == TYPE_STR) {
@@ -1774,7 +1774,7 @@ run_ready_tasks(void)
                         forked_task ft;
                         ft = t->t.forked;
                         current_task_id = ft.id;
-                        current_local = new_map();
+                        current_local = new_map(0);
                         ft.a.threaded = DEFAULT_THREAD_MODE;
                         do_forked_task(ft.program, ft.rt_env, ft.a,
                                        ft.f_index);
@@ -1850,7 +1850,7 @@ run_server_task_setting_id(Objid player, Var what, const char *verb,
     db_verb_handle h;
 
     current_task_id = new_task_id();
-    current_local = new_map();
+    current_local = new_map(0);
 
     if (task_id)
         *task_id = current_task_id;
@@ -1878,7 +1878,7 @@ run_server_program_task(Objid _this, const char *verb, Var args, Objid vloc,
                         Var *result)
 {
     current_task_id = new_task_id();
-    current_local = new_map();
+    current_local = new_map(0);
 
     enum outcome ret = do_server_program_task(Var::new_obj(_this), verb, args, Var::new_obj(vloc), verbname, program,
                        progr, debug, player, argstr,
@@ -2274,7 +2274,7 @@ bf_queue_info(Var arglist, Byte next, void *vdata, Objid progr)
             res.type = TYPE_INT;
             res.v.num = 0;
         } else {
-            res = new_map();
+            res = new_map(0);
             res = mapinsert(res, var_ref(queue_pname), Var::new_obj(tq->player));
             res = mapinsert(res, var_ref(queue_handler), Var::new_obj(tq->handler));
             res = mapinsert(res, var_ref(queue_connected), Var::new_bool(tq->connected));

@@ -175,6 +175,7 @@ set(src_CSRCS
     src/dependencies/sosemanuk.c
     src/dependencies/linenoise.c
     src/dependencies/strnatcmp.c
+    src/dependencies/hashmap.c
     src/http_parser.c
     src/regexpr.c)
 

@@ -132,7 +132,7 @@ aux_free(Var v)
             myfree(v.v.list, M_LIST);
             break;
         case TYPE_MAP:
-            myfree(v.v.tree, M_TREE);
+            myfree(v.v.map, M_TREE);
             break;
         case TYPE_ANON:
             assert(db_object_has_flag2(v, FLAG_INVALID));
@@ -162,18 +162,14 @@ complex_free_var(Var v)
                 gc_possible_root(v);
             break;
         case TYPE_MAP:
-            if (delref(v.v.tree) == 0) {
-                destroy_map(v);
-                gc_set_color(v.v.tree, GC_BLACK);
-                if (!gc_is_buffered(v.v.tree))
-                    myfree(v.v.tree, M_TREE);
+            if (delref(v.v.map) == 0) {
+                if(destroy_map(v)) {
+                    gc_set_color(v.v.map, GC_BLACK);
+                    if (!gc_is_buffered(v.v.map))
+                        myfree(v.v.map, M_TREE);
+                }
             }
-            else
-                gc_possible_root(v);
-            break;
-        case TYPE_ITER:
-            if (delref(v.v.trav) == 0)
-                destroy_iter(v);
+            gc_possible_root(v);
             break;
         case TYPE_WAIF:
             if (delref(v.v.waif) == 0) {
@@ -228,12 +224,8 @@ complex_free_var(Var v)
                 destroy_list(v);
             break;
         case TYPE_MAP:
-            if (delref(v.v.tree) == 0)
+            if (delref(v.v.map) == 0)
                 destroy_map(v);
-            break;
-        case TYPE_ITER:
-            if (delref(v.v.trav) == 0)
-                destroy_iter(v);
             break;
         case TYPE_WAIF:
             if (delref(v.v.waif) == 0) {
@@ -274,10 +266,7 @@ complex_var_ref(Var v)
             addref(v.v.list);
             break;
         case TYPE_MAP:
-            addref(v.v.tree);
-            break;
-        case TYPE_ITER:
-            addref(v.v.trav);
+            addref(v.v.map);
             break;
         case TYPE_WAIF:
             addref(v.v.waif);
@@ -304,10 +293,7 @@ complex_var_ref(Var v)
             addref(v.v.list);
             break;
         case TYPE_MAP:
-            addref(v.v.tree);
-            break;
-        case TYPE_ITER:
-            addref(v.v.trav);
+            addref(v.v.map);
             break;
         case TYPE_WAIF:
             addref(v.v.waif);
@@ -334,9 +320,6 @@ complex_var_dup(Var v)
         case TYPE_MAP:
             v = map_dup(v);
             break;
-        case TYPE_ITER:
-            v = iter_dup(v);
-            break;
         case TYPE_WAIF:
             v.v.waif = dup_waif(v.v.waif);
             break;
@@ -361,10 +344,7 @@ var_refcount(Var v)
             return refcount(v.v.list);
             break;
         case TYPE_MAP:
-            return refcount(v.v.tree);
-            break;
-        case TYPE_ITER:
-            return refcount(v.v.trav);
+            return refcount(v.v.map);
             break;
         case TYPE_ANON:
             if (v.v.anon)
@@ -423,7 +403,7 @@ compare(Var lhs, Var rhs, int case_matters)
                 else
                     return strcasecmp(lhs.v.str, rhs.v.str);
             case TYPE_FLOAT:
-                if (lhs.v.fnum == rhs.v.fnum)
+                if (std::fabs(lhs.v.fnum - rhs.v.fnum) < EPSILON)
                     return 0;
                 else
                     return (lhs.v.fnum - rhs.v.fnum) < 0.0 ? -1 : 1;
@@ -467,7 +447,7 @@ equality(Var lhs, Var rhs, int case_matters)
                 else
                     return !strcasecmp(lhs.v.str, rhs.v.str);
             case TYPE_FLOAT:
-                return lhs.v.fnum == rhs.v.fnum;
+                return std::fabs(lhs.v.fnum - rhs.v.fnum) < EPSILON;
             case TYPE_LIST:
                 return listequal(lhs, rhs, case_matters);
             case TYPE_MAP:
@@ -621,7 +601,7 @@ value_bytes(Var v)
             size += list_sizeof(v.v.list);
             break;
         case TYPE_MAP:
-            size += map_sizeof(v.v.tree);
+            size += map_sizeof(v);
             break;
         case TYPE_WAIF:
             size += waif_bytes(v.v.waif);

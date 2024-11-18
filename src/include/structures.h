@@ -54,6 +54,7 @@ typedef uint64_t UNum;
 #define SERVER_BITS 64
 #endif
 typedef Num Objid;
+#define EPSILON std::numeric_limits<double>::epsilon()
 
 /*
  * Special Objid's
@@ -123,6 +124,7 @@ typedef enum {
 #define TYPE_NUMERIC ((var_type) -2)	/* wildcard for (integer or float) */
 
 typedef struct Var Var;
+typedef struct hashmap hashmap;
 
 /* see map.c */
 typedef struct rbtree rbtree;
@@ -168,7 +170,7 @@ typedef struct Waif {
 	Objid obj;		/* OBJ */
 	enum error err;		/* ERR */
 	Var *list;		/* LIST */
-	rbtree *tree;		/* MAP */
+	hashmap *map;		/* MAP */
 	rbtrav *trav;		/* ITER */
 	double fnum;		/* FLOAT */
 	Object *anon;		/* ANON */

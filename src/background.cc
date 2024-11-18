@@ -94,7 +94,7 @@ void make_error_map(enum error error_type, const char *msg, Var *ret)
     err.type = TYPE_ERR;
     err.v.err = error_type;
 
-    *ret = new_map();
+    *ret = new_map(0);
     *ret = mapinsert(*ret, var_ref(error_key), err);
     *ret = mapinsert(*ret, var_ref(message_key), str_dup_to_var(msg));
 }

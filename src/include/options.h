@@ -49,9 +49,9 @@
  * because it will lose track of cyclic data structures.
  */
 
-#define ENABLE_GC
+//#define ENABLE_GC
 
-#define GC_ROOTS_LIMIT 2000
+//#define GC_ROOTS_LIMIT 2000
 
 /******************************************************************************
  * Define LOG_GC_STATS to enabled logging of reference cycle collection
@@ -553,6 +553,14 @@
 */
 
 #define CURL_TIMEOUT 60
+
+/******************************************************************************
+ * The default maximum number of seconds a curl() transfer can last.
+*/
+
+#define MAP_HASH_SEED0 1099511627776
+#define MAP_HASH_SEED1 549755813881
+#define MAP_HASH_FUNCTION hashmap_sip
 
 /*****************************************************************************
  ********** You shouldn't need to change anything below this point. **********

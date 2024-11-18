@@ -186,7 +186,7 @@ dbio_read_var(void)
             break;
         case _TYPE_MAP:
             l = dbio_read_num();
-            r = new_map();
+            r = new_map(0);
             for (i = 0; i < l; i++) {
                 Var key, value;
                 key = dbio_read_var();
@@ -347,15 +347,6 @@ void
 dbio_write_var(Var v)
 {
     int i;
-
-    /* don't write out the iterator */
-    if (v.type == TYPE_ITER) {
-        var_pair pair;
-        iterget(v, &pair)
-        ? dbio_write_var(pair.a)
-        : dbio_write_var(clear);
-        return;
-    }
 
     dbio_write_num((int) v.type & TYPE_DB_MASK);
 
