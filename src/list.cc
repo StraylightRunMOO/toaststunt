@@ -22,7 +22,7 @@
 #include <vector>
 
 #include <ctype.h>
-#include <string.h>
+#include <string>
 #include "my-math.h"
 
 #include "bf_register.h"
@@ -43,15 +43,33 @@
 #include "background.h"   // Threads
 #include "random.h"
 
+Var emptylist;
+Var emptylist_calls;
+
+namespace debug {
+    static package
+    bf_emptylist(Var arglist, Byte next, void *vdata, Objid progr)
+    {
+        if(arglist.v.list[0].v.num > 0 && arglist.v.list[1].v.num > 0) {
+            free_var(emptylist_calls);
+            emptylist_calls = new_map(0);
+        }
+
+        Var r = new_list(2);
+        r.v.list[1] = Var::new_int(var_refcount(emptylist));
+        r.v.list[2] = var_dup(emptylist_calls);
+
+        return make_var_pack(r);
+    }
+}
+
 Var
-new_list(int size)
+real_new_list(int size)
 {
     Var list;
     Var *ptr;
 
     if (size == 0) {
-        static Var emptylist;
-
         if (emptylist.v.list == nullptr) {
             if ((ptr = (Var *)mymalloc(1 * sizeof(Var), M_LIST)) == nullptr)
                 panic_moo("EMPTY_LIST: mymalloc failed");
@@ -209,6 +227,7 @@ doinsert(Var list, Var value, int pos)
 
         return list;
     }
+
     _new = new_list(size);
     for (i = 1; i < pos; i++)
         _new.v.list[i] = var_ref(list.v.list[i]);
@@ -665,7 +684,6 @@ bf_setadd(Var arglist, Byte next, void *vdata, Objid progr)
     }
 }
 
-
 static package
 bf_setremove(Var arglist, Byte next, void *vdata, Objid progr)
 {
@@ -681,7 +699,6 @@ bf_setremove(Var arglist, Byte next, void *vdata, Objid progr)
         return make_space_pack();
     }
 }
-
 
 static package
 insert_or_append(Var arglist, int append1)
@@ -712,20 +729,17 @@ insert_or_append(Var arglist, int append1)
     }
 }
 
-
 static package
 bf_listappend(Var arglist, Byte next, void *vdata, Objid progr)
 {
     return insert_or_append(arglist, 1);
 }
 
-
 static package
 bf_listinsert(Var arglist, Byte next, void *vdata, Objid progr)
 {
     return insert_or_append(arglist, 0);
 }
-
 
 static package
 bf_listdelete(Var arglist, Byte next, void *vdata, Objid progr)
@@ -748,7 +762,6 @@ bf_listdelete(Var arglist, Byte next, void *vdata, Objid progr)
         return make_space_pack();
     }
 }
-
 
 static package
 bf_listset(Var arglist, Byte next, void *vdata, Objid progr)
@@ -1769,6 +1782,7 @@ register_list(void)
     register_function("slice", 1, 3, bf_slice, TYPE_LIST, TYPE_ANY, TYPE_ANY);
     register_function("sort", 1, 4, bf_sort, TYPE_LIST, TYPE_LIST, TYPE_INT, TYPE_INT);
     register_function("all_members", 2, 2, bf_all_members, TYPE_ANY, TYPE_LIST);
+    register_function("emptylist", 0, 1, debug::bf_emptylist, TYPE_INT);
 
     /* string */
     register_function("tostr", 0, -1, bf_tostr);

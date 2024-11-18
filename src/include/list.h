@@ -20,8 +20,11 @@
 
 #include "structures.h"
 #include "streams.h"
+#include "map.h"
 
-extern Var new_list(int size);
+#include <string>
+
+extern Var real_new_list(int size);
 extern void destroy_list(Var list);
 extern Var list_dup(Var list);
 
@@ -47,6 +50,66 @@ extern Var strget(Var str, int i);
 
 extern const char *value2str(Var);
 extern void unparse_value(Stream *, Var);
+
+extern Var emptylist;
+extern Var emptylist_calls;
+
+namespace debug {
+
+    class snitch {
+    public:
+      snitch(std::string caller, std::string file, int line)
+        : caller_(caller == "" ? "[NONE]" : caller + "()")
+        , file_(file)
+        , line_(line)
+      {}
+
+      Var operator()(int size) {
+        /*
+        if(emptylist_calls.type != TYPE_MAP)
+            emptylist_calls = new_map();
+
+        if(size == 0) {
+          Var value, key = key_();
+
+          if(mapempty(emptylist_calls) || maplookup(emptylist_calls, key, &value, 0) == nullptr)
+            value = Var::new_int(1);
+          else
+            value.v.num++;
+
+          emptylist_calls = mapinsert(emptylist_calls, key, value);
+        }
+        */
+        
+        return real_new_list(size);
+      }
+
+    private:
+      Var key_() {
+          Stream *s = new_stream(caller_.size() + file_.size() + 22);
+          stream_add_string(s, caller_.c_str());
+          stream_add_char(s, ' ');
+          stream_add_string(s, file_.c_str());
+          stream_add_char(s, ':');
+          stream_add_string(s, std::to_string(line_).c_str());
+
+          Var key = str_dup_to_var(reset_stream(s));
+
+          free_stream(s);
+          return key;
+      }
+
+      std::string   caller_;
+      std::string   file_;
+      int           line_;
+    };
+
+  // remove the symbol for the function, then define a new version that instead
+  // creates a stack temporary instance of Reporter initialized with the caller
+  # define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+  # undef new_list
+  # define new_list debug::snitch(__FUNCTION__,__FILENAME__,__LINE__)
+}
 
 /*
  * Returns the length of the given list `l'.  Does *not* check to
