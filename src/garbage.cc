@@ -177,33 +177,21 @@ do_obj(void *data, Var v)
     return 0;
 }
 
-static int
-do_list(Var v, void *data, int first)
-{
-    gc_func *fp = (gc_func *)data;
-    if (v.is_collection() && is_not_green(v))
-        (*fp)(v);
-    return 0;
-}
-
-static int
-do_map(Var k, Var v, void *data, int first)
-{
-    gc_func *fp = (gc_func *)data;
-    if (v.is_collection() && is_not_green(v))
-        (*fp)(v);
-    return 0;
-}
-
 static void
 for_all_children(Var v, gc_func *fp)
 {
     if (v.is_object())
         db_for_all_propvals(v, do_obj, (void *)fp);
     else if (TYPE_LIST == v.type)
-        listforeach(v, do_list, (void *)fp);
+        listforeach(v, [&fp, &v](Var value, int first) -> int {
+            if (value.is_collection() && is_not_green(value)) (*fp)(v);
+            return 0;
+        });
     else if (TYPE_MAP == v.type)
-        mapforeach(v, do_map, (void *)fp);
+        mapforeach(v, [&fp, &v](Var key, Var value, int first) -> int {
+            if (value.is_collection() && is_not_green(value))  (*fp)(v);
+            return 0;
+        });
 }
 
 /* corresponds to `MarkGray' in Bacon and Rajan */

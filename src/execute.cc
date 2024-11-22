@@ -1104,7 +1104,7 @@ do_test:
                     free_var(map);
                     PUSH_TYPE_MISMATCH(8, key.type, TYPE_STR, TYPE_INT, TYPE_OBJ, TYPE_ERR, TYPE_FLOAT, TYPE_ANON, TYPE_WAIF, TYPE_BOOL);
                 } else {
-                    r = mapinsert(map, var_dup(key), var_dup(value));
+                    r = mapinsert(map, var_ref(key), var_ref(value));
                     if (value_bytes(r) <= server_int_option_cached(SVO_MAX_MAP_VALUE_BYTES))
                         PUSH(r);
                     else {
@@ -1622,16 +1622,16 @@ finish_comparison:
                     }
                 } else
 #endif              /* WAIF_DICT */
-                    if ((list.type != TYPE_LIST && list.type != TYPE_STR &&
-                            list.type != TYPE_MAP) ||
-                            ((list.type == TYPE_LIST || list.type == TYPE_STR) &&
-                             index.type != TYPE_INT) ||
-                            (list.type == TYPE_MAP && (index.is_collection() && TYPE_ANON != index.type))) {
+
+                    if ((list.type != TYPE_LIST && list.type != TYPE_STR && list.type != TYPE_MAP) ||
+                            ((list.type == TYPE_LIST || list.type == TYPE_STR) && index.type != TYPE_INT) ||
+                            (list.type == TYPE_MAP && (index.is_collection()))) {
                         free_var(index);
                         free_var(list);
                         PUSH_ERROR(E_TYPE);
                     } else if (list.type == TYPE_MAP) {
                         Var value;
+
                         if (maplookup(list, index, &value, 0) == nullptr) {
                             free_var(index);
                             free_var(list);
@@ -1725,6 +1725,27 @@ finish_comparison:
                 from = POP();
                 base = POP();   /* should be map, list or string */
 
+                if(RUN_ACTIV.temp.type == TYPE_BOOL && RUN_ACTIV.temp.v.truth) {
+                    if(base.type == TYPE_MAP) {
+                        int from_ = mapkeyindex(base, var_ref(from));
+                        if(from_ > 0) {
+                            free_var(from);
+                            from = Var::new_int(from_);
+                        }
+                    }
+
+                    if(base.type == TYPE_MAP) {
+                        int to_ = mapkeyindex(base, var_ref(to));
+                        if(to_ >= from.v.num) {
+                            free_var(to);
+                            to = Var::new_int(to_);
+                        }
+                    }
+
+                    RUN_ACTIV.temp.v.num = 0;
+                    RUN_ACTIV.temp.type = TYPE_CLEAR;
+                }
+
                 if (base.type != TYPE_MAP && base.type != TYPE_LIST
                         && base.type != TYPE_STR) {
                     var_type base_type = base.type;
@@ -1751,6 +1772,7 @@ finish_comparison:
                     int rel = compare(from, to, 0);
                     iterfrom = Var::new_int(from.v.num);
                     iterto = Var::new_int(to.v.num);
+
                     if ((rel <= 0) && (iterfrom.is_none() || iterto.is_none())) {
                         free_var(to);
                         free_var(from);
@@ -2369,11 +2391,8 @@ else if (obj.type == TYPE_##t1) {           \
                             v.type = TYPE_INT;
                             v.v.num = item.v.list[0].v.num > 0 ? 1 : 0;
                             PUSH(v);
-                        } else if (item.type == TYPE_MAP) {
-                            var_pair pair;
-                            v = mapfirst(item, &pair)
-                                ? var_ref(pair.a)
-                                : var_ref(none);
+                        } else if ((item.type == TYPE_MAP) && mapfirst(item, &v) > 0) {
+                            RUN_ACTIV.temp = Var::new_bool(true);
                             PUSH(v);
                         } else
                             PUSH_TYPE_MISMATCH(3, item.type, TYPE_STR, TYPE_LIST, TYPE_MAP);
@@ -2394,11 +2413,8 @@ else if (obj.type == TYPE_##t1) {           \
                             v.type = TYPE_INT;
                             v.v.num = item.v.list[0].v.num;
                             PUSH(v);
-                        } else if (item.type == TYPE_MAP) {
-                            var_pair pair;
-                            v = maplast(item, &pair)
-                                ? var_ref(pair.a)
-                                : var_ref(none);
+                        } else if (item.type == TYPE_MAP && maplast(item, &v) > 0) {
+                            RUN_ACTIV.temp = Var::new_bool(true);
                             PUSH(v);
                         } else
                             PUSH_TYPE_MISMATCH(3, item.type, TYPE_STR, TYPE_LIST, TYPE_MAP);

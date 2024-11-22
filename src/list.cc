@@ -18,13 +18,11 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <algorithm> // std::sort
-#include "dependencies/strnatcmp.c" // natural sorting
-#include <vector>
-
 #include <ctype.h>
 #include <string.h>
-#include "my-math.h"
+#include <vector>
 
+#include "my-math.h"
 #include "bf_register.h"
 #include "collection.h"
 #include "config.h"
@@ -42,6 +40,8 @@
 #include "server.h"
 #include "background.h"   // Threads
 #include "random.h"
+
+#include "dependencies/strnatcmp.c" // natural sorting
 
 Var
 new_list(int size)
@@ -122,16 +122,15 @@ list_dup(Var list)
     return _new;
 }
 
-int
-listforeach(Var list, listfunc func, void *data)
-{   /* does NOT consume `list' */
-    int i, n;
-    int first = 1;
-    int ret;
+int 
+listforeach(Var list, list_callback func) 
+{ /* does NOT consume `list' */
+    auto len = list.v.list[0].v.num;
 
-    for (i = 1, n = list.v.list[0].v.num; i <= n; i++) {
-        if ((ret = (*func)(list.v.list[i], data, first)))
-            return ret;
+    int ret;
+    int first = 1;
+    for (auto i = 1; i <= len; i++) {
+        if (ret = func(list.v.list[i], first)) return ret;
         first = 0;
     }
 
@@ -420,22 +419,6 @@ value2str(Var value)
     }
 }
 
-static int
-print_map_to_stream(Var key, Var value, void *sptr, int first)
-{
-    Stream *s = (Stream *)sptr;
-
-    if (!first) {
-        stream_add_string(s, ", ");
-    }
-
-    unparse_value(s, key);
-    stream_add_string(s, " -> ");
-    unparse_value(s, value);
-
-    return 0;
-}
-
 void
 unparse_value(Stream * s, Var v)
 {
@@ -492,8 +475,17 @@ unparse_value(Stream * s, Var v)
         case TYPE_MAP:
         {
             stream_add_char(s, '[');
-            mapforeach(v, print_map_to_stream, (void *)s);
-            stream_add_char(s, ']');
+            mapforeach(v, [&s](Var key, Var value, int first) -> int {
+               if (!first) stream_add_string(s, ", ");
+
+               unparse_value(s, key);
+               stream_add_string(s, " -> ");
+               unparse_value(s, value);
+
+               return 0;
+           });
+            
+           stream_add_char(s, ']');
         }
         break;
         case TYPE_ANON:
@@ -509,6 +501,26 @@ unparse_value(Stream * s, Var v)
             errlog("UNPARSE_VALUE: Unknown Var type = %d\n", v.type);
             stream_add_string(s, ">>Unknown value<<");
     }
+}
+
+Var 
+toliteral(Var args)
+{
+    Var r;
+    Stream *s = new_stream(100);
+
+    try {
+        unparse_value(s, args);
+        r.type = TYPE_STR;
+        r.v.str = str_dup(stream_contents(s));
+    }
+    catch (stream_too_big& exception) {
+        r.type = TYPE_ERR;
+        r.v.err = E_QUOTA;
+    }
+
+    free_stream(s);
+    return r;
 }
 
 /* called from utils.c */

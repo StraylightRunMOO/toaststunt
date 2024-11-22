@@ -18,6 +18,8 @@
 #ifndef EXT_LIST_H
 #define EXT_LIST_H 1
 
+#include <functional>
+
 #include "structures.h"
 #include "streams.h"
 
@@ -38,8 +40,8 @@ extern int listequal(Var lhs, Var rhs, int case_matters);
 
 extern int list_sizeof(Var *list);
 
-typedef int (*listfunc) (Var value, void *data, int first);
-extern int listforeach(Var list, listfunc func, void *data);
+typedef std::function<int(Var, int)> list_callback;
+extern int listforeach(Var list, list_callback func);
 
 extern Var strrangeset(Var list, int from, int to, Var value);
 extern Var substr(Var str, int lower, int upper);
@@ -47,6 +49,7 @@ extern Var strget(Var str, int i);
 
 extern const char *value2str(Var);
 extern void unparse_value(Stream *, Var);
+extern Var toliteral(Var);
 
 /*
  * Returns the length of the given list `l'.  Does *not* check to

@@ -226,13 +226,6 @@ alloc_waif_propvals(Waif *w, int clear)
 }
 
 static int
-map_refers_to(Var key, Var value, void *data, int first)
-{
-    Var *new_var = (Var*)data;
-    return refers_to(key, *new_var, true) || refers_to(value, *new_var, true);
-}
-
-static int
 refers_to(Var target, Var key, bool waif_self_check)
 {
     int i;
@@ -260,10 +253,11 @@ refers_to(Var target, Var key, bool waif_self_check)
         case TYPE_STR:
             return target.v.str == key.v.str;
         case TYPE_MAP:
-            return mapforeach(target, map_refers_to, &key);
-
-
+            return mapforeach(target, [&key](Var k, Var v, int first) -> int {
+                return refers_to(k, key, true) || refers_to(v, key, true);
+            });
     }
+
     return 0;
 }
 

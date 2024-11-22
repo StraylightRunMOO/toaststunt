@@ -28,20 +28,6 @@ struct ismember_data {
     int case_matters;
 };
 
-static int
-do_map_iteration(Var key, Var value, void *data, int first)
-{
-    struct ismember_data *ismember_data = (struct ismember_data *)data;
-
-    if (equality(value, ismember_data->value, ismember_data->case_matters)) {
-        return ismember_data->i;
-    }
-
-    ismember_data->i++;
-
-    return 0;
-}
-
 int
 ismember(Var lhs, Var rhs, int case_matters)
 {
@@ -62,7 +48,15 @@ ismember(Var lhs, Var rhs, int case_matters)
         ismember_data.value = lhs;
         ismember_data.case_matters = case_matters;
 
-        return mapforeach(rhs, do_map_iteration, &ismember_data);
+        return mapforeach(rhs, [&ismember_data](Var key, Var value, int first) -> int {
+            if (equality(value, ismember_data.value, ismember_data.case_matters))
+                return ismember_data.i;
+
+            ismember_data.i++;
+
+            return 0;
+        });
+
     } else {
         return 0;
     }

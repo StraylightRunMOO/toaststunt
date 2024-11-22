@@ -421,33 +421,6 @@ struct do_closure {
     yajl_gen_status status;
 };
 
-static int
-do_map(Var key, Var value, void *data, int first)
-{
-    struct do_closure *dmc = (struct do_closure *)data;
-
-    dmc->status = generate_key(dmc->g, key, dmc->gctx);
-    if (yajl_gen_status_ok != dmc->status)
-        return 1;
-    dmc->status = generate(dmc->g, value, dmc->gctx);
-    if (yajl_gen_status_ok != dmc->status)
-        return 1;
-
-    return 0;
-}
-
-static int
-do_list(Var value, void *data, int first)
-{
-    struct do_closure *dmc = (struct do_closure *)data;
-
-    dmc->status = generate(dmc->g, value, dmc->gctx);
-    if (yajl_gen_status_ok != dmc->status)
-        return 1;
-
-    return 0;
-}
-
 static yajl_gen_status
 generate(yajl_gen g, Var v, void *ctx)
 {
@@ -482,8 +455,19 @@ generate(yajl_gen g, Var v, void *ctx)
             dmc.gctx = gctx;
             dmc.status = yajl_gen_status_ok;
             yajl_gen_map_open(g);
-            if (mapforeach(v, do_map, &dmc))
-                return dmc.status;
+
+            if (mapforeach(v, [&dmc](Var key, Var value, int first) -> int {
+               dmc.status = generate_key(dmc.g, key, dmc.gctx);
+               if (yajl_gen_status_ok != dmc.status)
+                   return 1;
+
+               dmc.status = generate(dmc.g, value, dmc.gctx);
+               if (yajl_gen_status_ok != dmc.status)
+                   return 1;
+
+               return 0;
+            })) return dmc.status;
+
             yajl_gen_map_close(g);
             return yajl_gen_status_ok;
         }
@@ -494,8 +478,12 @@ generate(yajl_gen g, Var v, void *ctx)
             dmc.gctx = gctx;
             dmc.status = yajl_gen_status_ok;
             yajl_gen_array_open(g);
-            if (listforeach(v, do_list, &dmc))
-                return dmc.status;
+
+            if (listforeach(v, [&dmc](Var value, int first) -> int {
+                dmc.status = generate(dmc.g, value, dmc.gctx);
+                return (dmc.status == yajl_gen_status_ok) ? 0 : 1;
+            })) return dmc.status;
+
             yajl_gen_array_close(g);
             return yajl_gen_status_ok;
         }

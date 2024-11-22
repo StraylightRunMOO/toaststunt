@@ -162,14 +162,13 @@ complex_free_var(Var v)
                 gc_possible_root(v);
             break;
         case TYPE_MAP:
-            if (delref(v.v.map) == 0) {
-                if(destroy_map(v)) {
-                    gc_set_color(v.v.map, GC_BLACK);
-                    if (!gc_is_buffered(v.v.map))
-                        myfree(v.v.map, M_TREE);
-                }
+            if (delref(v.v.map) == 0 && destroy_map(v)) {
+                gc_set_color(v.v.map, GC_BLACK);
+                if (!gc_is_buffered(v.v.map))
+                    myfree(v.v.map, M_TREE);
             }
-            gc_possible_root(v);
+            else
+                gc_possible_root(v);
             break;
         case TYPE_WAIF:
             if (delref(v.v.waif) == 0) {
@@ -224,8 +223,8 @@ complex_free_var(Var v)
                 destroy_list(v);
             break;
         case TYPE_MAP:
-            if (delref(v.v.map) == 0)
-                destroy_map(v);
+            if (delref(v.v.map) == 0 && destroy_map(v))
+                myfree(map.v.map, M_TREE);
             break;
         case TYPE_WAIF:
             if (delref(v.v.waif) == 0) {

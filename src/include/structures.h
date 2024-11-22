@@ -106,7 +106,7 @@ typedef enum {
     TYPE_FINALLY,		/* on-stack marker for a TRY-FINALLY clause */
     _TYPE_FLOAT,		/* floating-point number; user-visible */
     _TYPE_MAP,			/* map; user-visible */
-    _TYPE_ITER,			/* map iterator; not visible */
+    _TYPE_OBSOLETE,		/* formerly iterator - we may be able to re-use this */
     _TYPE_ANON,			/* anonymous object; user-visible */
     _TYPE_WAIF,         /* lightweight object; user-visible */
     TYPE_BOOL,			/* Experimental boolean type */
@@ -115,7 +115,6 @@ typedef enum {
     TYPE_FLOAT = (_TYPE_FLOAT),
     TYPE_LIST = (_TYPE_LIST | TYPE_COMPLEX_FLAG),
     TYPE_MAP = (_TYPE_MAP | TYPE_COMPLEX_FLAG),
-    TYPE_ITER = (_TYPE_ITER | TYPE_COMPLEX_FLAG),
     TYPE_ANON = (_TYPE_ANON | TYPE_COMPLEX_FLAG),
     TYPE_WAIF = (_TYPE_WAIF | TYPE_COMPLEX_FLAG),
 } var_type;
@@ -124,12 +123,9 @@ typedef enum {
 #define TYPE_NUMERIC ((var_type) -2)	/* wildcard for (integer or float) */
 
 typedef struct Var Var;
-typedef struct hashmap hashmap;
 
-/* see map.c */
-typedef struct rbtree rbtree;
-typedef struct rbnode rbnode;
-typedef struct rbtrav rbtrav;
+/* see map.cc */
+typedef struct hashmap hashmap;
 
 /* defined in db_private.h */
 typedef struct Object Object;
@@ -171,7 +167,6 @@ typedef struct Waif {
 	enum error err;		/* ERR */
 	Var *list;		/* LIST */
 	hashmap *map;		/* MAP */
-	rbtrav *trav;		/* ITER */
 	double fnum;		/* FLOAT */
 	Object *anon;		/* ANON */
     Waif *waif;         /* WAIF */

@@ -165,7 +165,6 @@ dbio_read_var(void)
                  */
     r.type = (var_type) l;
 
-
     switch (l) {
         case TYPE_CLEAR:
         case TYPE_NONE:
@@ -200,7 +199,7 @@ dbio_read_var(void)
             for (i = 0; i < l; i++)
                 r.v.list[i + 1] = dbio_read_var();
             break;
-        case _TYPE_ITER:
+        case _TYPE_OBSOLETE:
             r = dbio_read_var();
             break;
         case _TYPE_ANON:
@@ -335,14 +334,6 @@ dbio_write_string(const char *s)
     dbio_printf("%s\n", s ? s : "");
 }
 
-static int
-dbio_write_map(Var key, Var value, void *data, int first)
-{
-    dbio_write_var(key);
-    dbio_write_var(value);
-    return 0;
-}
-
 void
 dbio_write_var(Var v)
 {
@@ -369,7 +360,11 @@ dbio_write_var(Var v)
             break;
         case TYPE_MAP:
             dbio_write_num(maplength(v));
-            mapforeach(v, dbio_write_map, nullptr);
+            mapforeach(v, [](Var key, Var value, int first) -> int {
+               dbio_write_var(key);
+               dbio_write_var(value);
+               return 0;
+           });
             break;
         case TYPE_LIST:
             dbio_write_num(v.v.list[0].v.num);
