@@ -15,6 +15,8 @@
     Pavel@Xerox.Com
  *****************************************************************************/
 
+#include <random>
+
 #include "sosemanuk.h"
 #include "structures.h"
 
@@ -34,3 +36,26 @@ extern Var do_power(Var, Var);
 
 extern sosemanuk_key_context key_context;
 extern sosemanuk_run_context run_context;
+
+struct splitmix64 {
+  using result_type = uint64_t;
+
+  splitmix64() {
+    std::random_device rd;
+    state = rd();
+  }
+
+  splitmix64(result_type s) : state(s) {}
+  static constexpr result_type min() { return 0; }
+  static constexpr result_type max() { return 0xFFFFFFFFFFFFFFFF; }
+  result_type operator()() {
+    result_type z = (state += UINT64_C(0x9E3779B97F4A7C15));
+    z = (z ^ (z >> 30)) * UINT64_C(0xBF58476D1CE4E5B9);
+    z = (z ^ (z >> 27)) * UINT64_C(0x94D049BB133111EB);
+    return z ^ (z >> 31);
+  }
+
+  result_type state;
+};
+
+extern splitmix64 new_splitmix64(uint64_t);

@@ -175,7 +175,7 @@ map_dup(Var map)
     #endif
 
     #ifdef MEMO_SIZE
-        var_metadata *_old_metadata = ((var_metadata*)map.v.map) - 1;
+        var_metadata *_old_metadata = ((var_metadata*)map.v.map)  - 1;
         var_metadata *_new_metadata = ((var_metadata*)_new.v.map) - 1;
 
         _new_metadata->size = _old_metadata->size;
@@ -192,8 +192,7 @@ mapinsert(Var map, Var key, Var value)
      * boundary conditions in the looping logic), and keys that are
      * collections (for which `compare' does not currently work).
      */
-    if (key.type == TYPE_NONE || key.type == TYPE_CLEAR
-            || (key.is_collection() && TYPE_ANON != key.type))
+    if (key.type == TYPE_NONE || key.type == TYPE_CLEAR || (key.is_collection() && TYPE_ANON != key.type))
         panic_moo("MAPINSERT: invalid key");
 
     size_t size_change = (value_bytes(key) + value_bytes(value));
@@ -234,8 +233,34 @@ int mapequal(Var lhs, Var rhs, int case_matters)
     return 0; // TODO
 }
 
+static inline bool mapclean(Var map) {
+    bool is_dirty = hashmap_dirty(map.v.map);
+    if(is_dirty) {
+        size_t iter = 1;
+        map_entry *item;
+        std::vector<map_entry> keys;
+
+        while (hashmap_iter(map.v.map, &iter, (void**)&item, false))
+            if(item->value.type == TYPE_CLEAR)
+                keys.push_back(map_entry{.key = item->key});
+
+        for(auto &k : keys)
+            if((item = (map_entry*)hashmap_delete(map.v.map, (const void*)&k)) != nullptr)
+                map_element_free(item);
+
+        is_dirty = hashmap_set_dirty(map.v.map, false);
+    }
+
+    return is_dirty;
+}
+
 Num maplength(Var map)
 {
+    if(hashmap_dirty(map.v.map)) {
+        mapclean(map);
+        return maplength(map);
+    }
+
     return hashmap_count(map.v.map);
 }
 
@@ -256,7 +281,7 @@ map_sizeof(Var map)
 
     #ifdef MEMO_SIZE
         var_metadata *metadata = ((var_metadata*)map.v.map) - 1;
-        if(size = static_cast<int>(metadata->size)) return size;
+        if((size = static_cast<int>(metadata->size)) > 0) return size;
     #endif
 
     size += static_cast<uint32_t>(sizeof(Var) + sizeof(map.v.map));
@@ -284,7 +309,11 @@ int mapforeach(Var map, map_callback func)
     int first = 1;
     size_t iter = 1;
     map_entry *item;
+
     while (hashmap_iter(map.v.map, &iter, (void**)&item, false)) {
+        if(item->value.type == TYPE_CLEAR)
+            continue;
+
         ret = func(item->key, item->value, first);
         if (ret) return ret;
         first = 0;
@@ -393,6 +422,30 @@ maplookup(Var map, Var key, Var *value, int case_matters)
     return nullptr;
 }
 
+Var&
+mapat(Var map, Var key)
+{
+    map_entry *found;
+    map_entry find{.key = key};
+    
+    if((found = (map_entry*)hashmap_get(map.v.map, &find)) != nullptr) {
+        return found->value;
+    } else {
+        Var r;
+        r.type = TYPE_CLEAR;
+        find.value = r;
+        (map_entry*)hashmap_set(map.v.map, &find);
+        hashmap_set_dirty(map.v.map, true);
+
+        #ifdef MEMO_SIZE
+            var_metadata *metadata = ((var_metadata*)map.v.map) - 1;
+            metadata->size = 0;
+        #endif
+
+        return mapat(map, key);
+    }
+}
+
 const map_entry*
 mapstrlookup(Var map, const char *key, Var *value, int case_matters)
 {
@@ -446,12 +499,17 @@ map_entry *mapdelete(Var map, Var key)
     return old_entry;
 }
 
+bool maphaskey(Var map, Var key) {
+    map_entry find{.key = key};
+    return (hashmap_get(map.v.map, &find) != nullptr);
+}
+
 /**** built in functions ****/
 static package
 bf_mapdelete(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    Var map = var_ref(arglist.v.list[1]);
-    Var key = arglist.v.list[2];
+    Var map = var_ref(arglist[1]);
+    Var key = arglist[2];
 
     if (key.is_collection()) {
         free_var(arglist);
@@ -469,12 +527,12 @@ bf_mapdelete(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_mapkeys(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    Var map = arglist.v.list[1];
+    Var map = arglist[1];
     Var r = new_list(maplength(map));
 
     auto count = 0;
     mapforeach(map, [&r, &count](Var key, Var value, int first) -> int {
-        r.v.list[++count] = var_ref(key);
+        r[++count] = var_ref(key);
         return 0;
     });
 
@@ -485,8 +543,8 @@ bf_mapkeys(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_mapvalues(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    const auto nargs = arglist.v.list[0].v.num;
-    Var map = arglist.v.list[1];
+    const auto nargs = arglist.length();
+    Var map = arglist[1];
     Var r;
 
     //nargs==1: simple mapvalues, dump all values of the map.
@@ -495,7 +553,7 @@ bf_mapvalues(Var arglist, Byte next, void *vdata, Objid progr)
 
         auto count = 0;
         mapforeach(map, [&r, &count](Var key, Var value, int first) -> int {
-            r.v.list[++count] = var_ref(value);
+            r[++count] = var_ref(value);
             return 0;
         });
 
@@ -505,8 +563,8 @@ bf_mapvalues(Var arglist, Byte next, void *vdata, Objid progr)
 
     r = new_list(nargs - 1);
     for (int i = 1; i < nargs; ++i) {
-        if(const map_entry *entry = maplookup(map, arglist.v.list[i+1], nullptr, true)) {
-            r.v.list[i] = var_ref(entry->value);
+        if(const map_entry *entry = maplookup(map, arglist[i+1], nullptr, true)) {
+            r[i] = var_ref(entry->value);
         } else {
             free_var(r);
             free_var(arglist);
@@ -521,17 +579,17 @@ bf_mapvalues(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_maphaskey(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    Var key = arglist.v.list[2];
+    Var key = arglist[2];
     if (key.is_collection()) {
         free_var(arglist);
         return make_error_pack(E_TYPE);
     }
 
-    Var map = arglist.v.list[1];
-    bool case_matters = arglist.v.list[0].v.num >= 3 && is_true(arglist.v.list[3]);
+    bool case_matters = arglist.length() >= 3 && is_true(arglist[3]);
 
-    map_entry find{.key = key};
-    Var ret = Var::new_bool(hashmap_get(map.v.map, &find) != nullptr);
+    Var map = arglist[1];
+
+    Var ret = Var::new_bool(maphaskey(map, key));
 
     free_var(arglist);
     return make_var_pack(ret);

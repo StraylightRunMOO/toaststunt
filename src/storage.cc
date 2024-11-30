@@ -20,6 +20,7 @@
 
 #include "config.h"
 #include "list.h"
+#include "log.h"
 #include "options.h"
 #include "server.h"
 #include "storage.h"
@@ -60,11 +61,12 @@ mymalloc(unsigned size, Memory_Type type)
 
     if (size == 0)      /* For queasy systems */
         size = 1;
-
+    
     offs = refcount_overhead(type);
+    
     memptr = (char *) malloc(offs + size);
     if (!memptr) {
-        sprintf(msg, "memory allocation (size %u) failed!", size);
+        sprintf(msg, "memory allocation (size %u) failed!", offs + size);
         panic_moo(msg);
     }
 
@@ -92,6 +94,57 @@ mymalloc(unsigned size, Memory_Type type)
 #endif /* MEMO_SIZE */
 
     }
+    return memptr;
+}
+
+void *
+mycalloc(unsigned count, unsigned size, Memory_Type type)
+{
+    char *memptr;
+    char msg[100];
+    int offs;
+
+    if (size == 0)      /* For queasy systems */
+        size = 1;
+    
+    offs = refcount_overhead(type);
+    
+    memptr = (char *) calloc(count, offs + size);
+
+    if (!memptr) {
+        sprintf(msg, "memory allocation (size %u) failed!", offs + size);
+        panic_moo(msg);
+    }
+
+    if (offs) {
+        char *metaptr = memptr;
+        memptr += offs;
+
+        for(auto i=0; i<count; i++) {
+            metaptr += offs;
+            var_metadata *metadata = (var_metadata *)(metaptr - sizeof(var_metadata));
+            metadata->refcount = 1;
+
+    #ifdef ENABLE_GC
+            if (type == M_LIST || type == M_TREE || type == M_ANON) {
+                metadata->buffered = 0;
+                metadata->color = (type == M_ANON) ? GC_BLACK : GC_GREEN;
+            }
+    #endif /* ENABLE_GC */
+
+    #ifdef MEMO_SIZE
+            if (type == M_STRING)
+                metadata->size = size - 1;
+    #endif /* MEMO_SIZE */
+
+    #ifdef MEMO_SIZE
+            if (type == M_LIST || type == M_TREE)
+                metadata->size = 0;
+    #endif /* MEMO_SIZE */
+        }
+
+    }
+
     return memptr;
 }
 

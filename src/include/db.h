@@ -30,10 +30,10 @@ is_list_of_objs(Var v)
     int i;
 
     if (TYPE_LIST != v.type)
-	return false;
+		return false;
 
-    for (i = 1; i <= v.v.list[0].v.num; i++)
-	if (TYPE_OBJ != v.v.list[i].type)
+    for (i = 1; i <= v.length(); i++)
+	if (TYPE_OBJ != v[i].type)
 	    return false;
 
     return true;

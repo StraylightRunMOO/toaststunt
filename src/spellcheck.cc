@@ -39,8 +39,8 @@ bf_spellcheck(Var arglist, Byte next, void *vdata, Objid progr) {
         spell_checker = to_aspell_speller(possible_err);
     }
 
-    const char *word = arglist.v.list[1].v.str;
-    int word_size = memo_strlen(arglist.v.list[1].v.str);
+    const char *word = arglist[1].v.str;
+    int word_size = memo_strlen(arglist[1].v.str);
 
     int correct = aspell_speller_check(spell_checker, word, word_size);
     if (!correct) {

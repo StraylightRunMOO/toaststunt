@@ -53,7 +53,7 @@ else()
 endif()
 
 # Compiler Flags
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD 99)
 
 # These flags are shared by the RELEASE and WARN build types.
@@ -235,6 +235,7 @@ set(src_CXXSRCS
     src/program.cc
     src/property.cc
     src/quota.cc
+    src/structures.cc
     src/server.cc
     src/storage.cc
     src/streams.cc

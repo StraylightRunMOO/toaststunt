@@ -232,10 +232,9 @@ file_make_error(const char *errtype, const char *msg) {
     value.v.str = str_dup(errtype);
 
     p.kind = package::BI_RAISE;
-    p.u.raise.code.type = TYPE_ERR;
-    p.u.raise.code.v.err = E_FILE;
-    p.u.raise.msg = str_dup(msg);
-    p.u.raise.value = value;
+
+    raise_t err{.code = Var::new_err(E_FILE), .value = value, .msg = str_dup(msg)};
+    p.u = err;
 
     return p;
 }
@@ -334,14 +333,13 @@ const char *file_resolve_path(const char *pathname) {
 
 }
 
-
 /***************************************************************
  * Built in functions
+***************************************************************/
 
 /***************************************************************
  * File open and close.
  ***************************************************************/
-
 
 /*
  * FHANDLE file_open(STR name, STR mode)
@@ -353,8 +351,8 @@ bf_file_open(Var arglist, Byte next, void *vdata, Objid progr)
     package r;
     Var fhandle;
     const char *real_filename;
-    const char *filename = arglist.v.list[1].v.str;
-    const char *mode = arglist.v.list[2].v.str;
+    const char *filename = arglist[1].v.str;
+    const char *mode = arglist[2].v.str;
     const char *fmode;
     file_mode rmode;
     file_type type;
@@ -367,7 +365,7 @@ bf_file_open(Var arglist, Byte next, void *vdata, Objid progr)
     else if ((real_filename = file_resolve_path(filename)) == nullptr)
         r = file_raise_notokfilename("file_open", filename);
     else if ((fmode = file_modestr_to_mode(mode, &type, &rmode)) == nullptr)
-        r = make_raise_pack(E_INVARG, "Invalid mode string", var_ref(arglist.v.list[2]));
+        r = make_raise_pack(E_INVARG, "Invalid mode string", var_ref(arglist[2]));
     else if ((fhandle = file_handle_new(filename, type, rmode)).v.num < 0)
         r = make_raise_pack(E_QUOTA, "Too many files open", zero);
     else if ((f = fopen(real_filename, fmode)) == nullptr) {
@@ -390,7 +388,7 @@ static package
 bf_file_close(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    Var fhandle = arglist.v.list[1];
+    Var fhandle = arglist[1];
     FILE *f;
 
     errno = 0;
@@ -416,7 +414,7 @@ static package
 bf_file_name(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    Var fhandle = arglist.v.list[1];
+    Var fhandle = arglist[1];
     const char *name;
     Var rv;
 
@@ -437,7 +435,7 @@ static package
 bf_file_openmode(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    Var fhandle = arglist.v.list[1];
+    Var fhandle = arglist[1];
     char buffer[5] = {0, 0, 0, 0, 0};
     file_mode mode;
     file_type type;
@@ -513,7 +511,7 @@ static package
 bf_file_readline(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    Var fhandle = arglist.v.list[1];
+    Var fhandle = arglist[1];
     Var rv;
     int len;
     file_mode mode;
@@ -579,9 +577,9 @@ static package
 bf_file_readlines(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    Var fhandle = arglist.v.list[1];
-    Num begin = arglist.v.list[2].v.num;
-    Num end   = arglist.v.list[3].v.num;
+    Var fhandle = arglist[1];
+    Num begin = arglist[2].v.num;
+    Num end   = arglist[3].v.num;
     Num begin_loc = 0, linecount = 0;
     file_mode mode;
     Var rv;
@@ -651,8 +649,8 @@ bf_file_readlines(Var arglist, Byte next, void *vdata, Objid progr)
                 rv = new_list(linecount);
                 i = 1;
                 while (linebuf_cur != nullptr) {
-                    rv.v.list[i].type = TYPE_STR;
-                    rv.v.list[i].v.str = linebuf_cur->line;
+                    rv[i].type = TYPE_STR;
+                    rv[i].v.str = linebuf_cur->line;
                     linebuf_cur = linebuf_cur->next;
                     i++;
                 }
@@ -674,8 +672,8 @@ static package
 bf_file_writeline(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    Var fhandle = arglist.v.list[1];
-    const char *buffer = arglist.v.list[2].v.str;
+    Var fhandle = arglist[1];
+    const char *buffer = arglist[2].v.str;
     const char *rawbuffer;
     file_mode mode;
     file_type type;
@@ -720,10 +718,10 @@ bf_file_read(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
 
-    Var fhandle = arglist.v.list[1];
+    Var fhandle = arglist[1];
     file_mode mode;
     file_type type;
-    Num record_length = arglist.v.list[2].v.num;
+    Num record_length = arglist[2].v.num;
     Num read_length;
 
     char buffer[FILE_IO_BUFFER_LENGTH];
@@ -794,7 +792,7 @@ static package
 bf_file_flush(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    Var fhandle = arglist.v.list[1];
+    Var fhandle = arglist[1];
     FILE *f;
 
     errno = 0;
@@ -822,8 +820,8 @@ static package
 bf_file_write(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    Var fhandle = arglist.v.list[1], rv;
-    const char *buffer = arglist.v.list[2].v.str;
+    Var fhandle = arglist[1], rv;
+    const char *buffer = arglist[2].v.str;
     const char *rawbuffer;
     file_mode mode;
     file_type type;
@@ -871,9 +869,9 @@ static package
 bf_file_seek(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    Var fhandle = arglist.v.list[1];
-    Num seek_to = arglist.v.list[2].v.num;
-    const char *whence = arglist.v.list[3].v.str;
+    Var fhandle = arglist[1];
+    Num seek_to = arglist[2].v.num;
+    const char *whence = arglist[3].v.str;
     int whnce = 0, whence_ok = 1;
     FILE *f;
 
@@ -912,7 +910,7 @@ static package
 bf_file_tell(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    Var fhandle = arglist.v.list[1];
+    Var fhandle = arglist[1];
     Var rv;
     FILE *f;
 
@@ -941,7 +939,7 @@ static package
 bf_file_eof(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    Var fhandle = arglist.v.list[1];
+    Var fhandle = arglist[1];
     Var rv;
     FILE *f;
 
@@ -1034,7 +1032,7 @@ bf_file_size(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
     Var     rv;
-    Var filespec = arglist.v.list[1];
+    Var filespec = arglist[1];
     struct stat buf;
 
     if (file_stat(progr, filespec, &r, &buf)) {
@@ -1056,7 +1054,7 @@ bf_file_mode(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
     Var     rv;
-    Var filespec = arglist.v.list[1];
+    Var filespec = arglist[1];
     struct stat buf;
 
     if (file_stat(progr, filespec, &r, &buf)) {
@@ -1078,7 +1076,7 @@ bf_file_type(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
     Var     rv;
-    Var filespec = arglist.v.list[1];
+    Var filespec = arglist[1];
     struct stat buf;
 
     if (file_stat(progr, filespec, &r, &buf)) {
@@ -1100,7 +1098,7 @@ bf_file_last_access(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
     Var     rv;
-    Var filespec = arglist.v.list[1];
+    Var filespec = arglist[1];
     struct stat buf;
 
     if (file_stat(progr, filespec, &r, &buf)) {
@@ -1122,7 +1120,7 @@ bf_file_last_modify(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
     Var     rv;
-    Var filespec = arglist.v.list[1];
+    Var filespec = arglist[1];
     struct stat buf;
 
     if (file_stat(progr, filespec, &r, &buf)) {
@@ -1144,7 +1142,7 @@ bf_file_last_change(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
     Var     rv;
-    Var filespec = arglist.v.list[1];
+    Var filespec = arglist[1];
     struct stat buf;
 
     if (file_stat(progr, filespec, &r, &buf)) {
@@ -1166,27 +1164,27 @@ bf_file_stat(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
     Var     rv;
-    Var filespec = arglist.v.list[1];
+    Var filespec = arglist[1];
     struct stat buf;
 
     if (file_stat(progr, filespec, &r, &buf)) {
         rv = new_list(8);
-        rv.v.list[1].type = TYPE_INT;
-        rv.v.list[1].v.num = buf.st_size;
-        rv.v.list[2].type = TYPE_STR;
-        rv.v.list[2].v.str = str_dup(file_type_string(buf.st_mode));
-        rv.v.list[3].type = TYPE_STR;
-        rv.v.list[3].v.str = str_dup(file_mode_string(buf.st_mode));
-        rv.v.list[4].type = TYPE_STR;
-        rv.v.list[4].v.str = str_dup("");
-        rv.v.list[5].type = TYPE_STR;
-        rv.v.list[5].v.str = str_dup("");
-        rv.v.list[6].type = TYPE_INT;
-        rv.v.list[6].v.num = buf.st_atime;
-        rv.v.list[7].type = TYPE_INT;
-        rv.v.list[7].v.num = buf.st_mtime;
-        rv.v.list[8].type = TYPE_INT;
-        rv.v.list[8].v.num = buf.st_ctime;
+        rv[1].type = TYPE_INT;
+        rv[1].v.num = buf.st_size;
+        rv[2].type = TYPE_STR;
+        rv[2].v.str = str_dup(file_type_string(buf.st_mode));
+        rv[3].type = TYPE_STR;
+        rv[3].v.str = str_dup(file_mode_string(buf.st_mode));
+        rv[4].type = TYPE_STR;
+        rv[4].v.str = str_dup("");
+        rv[5].type = TYPE_STR;
+        rv[5].v.str = str_dup("");
+        rv[6].type = TYPE_INT;
+        rv[6].v.num = buf.st_atime;
+        rv[7].type = TYPE_INT;
+        rv[7].v.num = buf.st_mtime;
+        rv[8].type = TYPE_INT;
+        rv[8].v.num = buf.st_ctime;
         r = make_var_pack(rv);
     }
     free_var(arglist);
@@ -1220,10 +1218,10 @@ bf_file_list(Var arglist, Byte next, void *vdata, Objid progr)
        than the original scandir method.   -- AAB 06/03/97
      */
     package r;
-    const char *pathspec = arglist.v.list[1].v.str;
+    const char *pathspec = arglist[1].v.str;
     const char *real_pathname;
-    int   detailed = (arglist.v.list[0].v.num > 1
-                      ? is_true(arglist.v.list[2])
+    int   detailed = (arglist.length() > 1
+                      ? is_true(arglist[2])
                       : 0);
 
     if (!file_verify_caller(progr)) {
@@ -1253,14 +1251,14 @@ bf_file_list(Var arglist, Byte next, void *vdata, Objid progr)
                             break;
                         } else {
                             detail = new_list(4);
-                            detail.v.list[1].type = TYPE_STR;
-                            detail.v.list[1].v.str = str_dup(curfile->d_name);
-                            detail.v.list[2].type = TYPE_STR;
-                            detail.v.list[2].v.str = str_dup(file_type_string(buf.st_mode));
-                            detail.v.list[3].type = TYPE_STR;
-                            detail.v.list[3].v.str = str_dup(file_mode_string(buf.st_mode));
-                            detail.v.list[4].type = TYPE_INT;
-                            detail.v.list[4].v.num = buf.st_size;
+                            detail[1].type = TYPE_STR;
+                            detail[1].v.str = str_dup(curfile->d_name);
+                            detail[2].type = TYPE_STR;
+                            detail[2].v.str = str_dup(file_type_string(buf.st_mode));
+                            detail[3].type = TYPE_STR;
+                            detail[3].v.str = str_dup(file_mode_string(buf.st_mode));
+                            detail[4].type = TYPE_INT;
+                            detail[4].v.num = buf.st_size;
                         }
                     } else {
                         detail.type = TYPE_STR;
@@ -1291,7 +1289,7 @@ static package
 bf_file_mkdir(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    const char *pathspec = arglist.v.list[1].v.str;
+    const char *pathspec = arglist[1].v.str;
     const char *real_pathname;
 
     if (!file_verify_caller(progr)) {
@@ -1317,7 +1315,7 @@ static package
 bf_file_rmdir(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    const char *pathspec = arglist.v.list[1].v.str;
+    const char *pathspec = arglist[1].v.str;
     const char *real_pathname;
 
     if (!file_verify_caller(progr)) {
@@ -1343,7 +1341,7 @@ static package
 bf_file_remove(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    const char *pathspec = arglist.v.list[1].v.str;
+    const char *pathspec = arglist[1].v.str;
     const char *real_pathname;
 
     if (!file_verify_caller(progr)) {
@@ -1368,8 +1366,8 @@ static package
 bf_file_rename(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    const char *fromspec = arglist.v.list[1].v.str;
-    const char *tospec = arglist.v.list[2].v.str;
+    const char *fromspec = arglist[1].v.str;
+    const char *tospec = arglist[2].v.str;
     char *real_fromspec = nullptr;
     const char *real_tospec;
 
@@ -1423,8 +1421,8 @@ static package
 bf_file_chmod(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    const char *pathspec = arglist.v.list[1].v.str;
-    const char *modespec = arglist.v.list[2].v.str;
+    const char *pathspec = arglist[1].v.str;
+    const char *modespec = arglist[2].v.str;
     mode_t newmode;
     const char *real_filename;
 
@@ -1468,7 +1466,7 @@ static package
 bf_file_grep(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    Var fhandle = arglist.v.list[1];
+    Var fhandle = arglist[1];
     int len;
     file_mode mode;
     const char *line = nullptr;
@@ -1487,10 +1485,10 @@ bf_file_grep(Var arglist, Byte next, void *vdata, Objid progr)
     {
         tmp_name.type = TYPE_STR;
         tmp_num.type = TYPE_INT;
-        arg_length = memo_strlen(arglist.v.list[2].v.str);
+        arg_length = memo_strlen(arglist[2].v.str);
         ret = new_list(0);
 
-        if (arglist.v.list[0].v.num >= 3 && is_true(arglist.v.list[3]))
+        if (arglist.length() >= 3 && is_true(arglist[3]))
             match_all = 1;
 
         rewind(file_handle_file_safe(fhandle));
@@ -1498,7 +1496,7 @@ bf_file_grep(Var arglist, Byte next, void *vdata, Objid progr)
         while ((line = file_get_line(fhandle, &len)) != nullptr)
         {
             line_num++;
-            if (len > 0 && strindex(line, len, arglist.v.list[2].v.str, arg_length, 0))
+            if (len > 0 && strindex(line, len, arglist[2].v.str, arg_length, 0))
             {
                 tmp = new_list(0);
                 // Have to get rid of the newline, woops
@@ -1531,7 +1529,7 @@ static package
 bf_file_count_lines(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package r;
-    Var fhandle = arglist.v.list[1];
+    Var fhandle = arglist[1];
     free_var(arglist);
     file_mode mode;
     Var rv;

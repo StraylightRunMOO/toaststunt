@@ -371,7 +371,7 @@ bf_exec(Var arglist, Byte next, void *vdata, Objid progr)
      */
     Var v;
     int i, c;
-    FOR_EACH(v, arglist.v.list[1], i, c) {
+    FOR_EACH(v, arglist[1], i, c) {
         if (TYPE_STR != v.type) {
             pack = make_error_pack(E_INVARG);
             goto free_arglist;
@@ -384,7 +384,7 @@ bf_exec(Var arglist, Byte next, void *vdata, Objid progr)
     }
 
     /* check the path */
-    cmd = arglist.v.list[1].v.list[1].v.str;
+    cmd = arglist[1][1].v.str;
     if (0 == strlen(cmd)) {
         pack = make_raise_pack(E_INVARG, "Invalid path", var_ref(zero));
         goto free_arglist;
@@ -400,10 +400,10 @@ bf_exec(Var arglist, Byte next, void *vdata, Objid progr)
     }
 
     /* Make sure any environment variables supplied are strings. */
-    if (arglist.v.list[0].v.num >= 3) {
+    if (arglist.length() >= 3) {
         // Use our own i and c here because i gets reused later.
         int env_i, env_c;
-        FOR_EACH(v, arglist.v.list[3], env_i, env_c) {
+        FOR_EACH(v, arglist[3], env_i, env_c) {
             if (v.type != TYPE_STR) {
                 pack = make_error_pack(E_INVARG);
                 goto free_arglist;
@@ -423,7 +423,7 @@ bf_exec(Var arglist, Byte next, void *vdata, Objid progr)
     in = nullptr;
     len = 0;
     if (listlength(arglist) > 1) {
-        if ((in = binary_to_raw_bytes(arglist.v.list[2].v.str, &len)) == nullptr) {
+        if ((in = binary_to_raw_bytes(arglist[2].v.str, &len)) == nullptr) {
             pack = make_error_pack(E_INVARG);
             goto free_cmd;
         }
@@ -457,17 +457,17 @@ bf_exec(Var arglist, Byte next, void *vdata, Objid progr)
     }
 
     args = (const char **)mymalloc(sizeof(const char *) * i, M_ARRAY);
-    FOR_EACH(v, arglist.v.list[1], i, c)
+    FOR_EACH(v, arglist[1], i, c)
     args[i - 1] = str_dup(v.v.str);
     args[i - 1] = nullptr;
 
 
     /* setup the environment variables */
     // Add two to the args so we're guaranteed to always have env[0] for PATH and env[$] for null
-    env = (const char **)mymalloc(sizeof(const char *) * ((listlength(arglist) >= 3 ? listlength(arglist.v.list[3]) : 0) + 2), M_ARRAY);
+    env = (const char **)mymalloc(sizeof(const char *) * ((listlength(arglist) >= 3 ? listlength(arglist[3]) : 0) + 2), M_ARRAY);
     env[0] = str_dup("PATH=/bin:/usr/bin");
     if (listlength(arglist) >= 3) {
-        FOR_EACH(v, arglist.v.list[3], i, c)
+        FOR_EACH(v, arglist[3], i, c)
         env[i] = str_dup(v.v.str);
         env[i] = nullptr;
     } else {
@@ -554,14 +554,11 @@ deal_with_child_exit(void)
         if (tw && TWS_STOP == tw->status) {
             Var v;
             v = new_list(3);
-            v.v.list[1].type = TYPE_INT;
-            v.v.list[1].v.num = tw->code;
+            v[1] = Var::new_int(tw->code);
             stdout_readable(tw->fout, tw);
-            v.v.list[2].type = TYPE_STR;
-            v.v.list[2].v.str = str_dup(reset_stream(tw->sout));
+            v[2] = str_dup_to_var(reset_stream(tw->sout));
             stderr_readable(tw->ferr, tw);
-            v.v.list[3].type = TYPE_STR;
-            v.v.list[3].v.str = str_dup(reset_stream(tw->serr));
+            v[3] = str_dup_to_var(reset_stream(tw->serr));
 
             resume_task(tw->the_vm, v);
         }

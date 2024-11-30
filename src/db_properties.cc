@@ -101,8 +101,8 @@ property_defined_at_or_below(const char *pname, int phash, Object *o)
             return 1;
 
     Var children = o->children;
-    for (i = 1; i <= children.v.list[0].v.num; i++) {
-        Object *child = dbpriv_dereference(children.v.list[i]);
+    for (i = 1; i <= children.length(); i++) {
+        Object *child = dbpriv_dereference(children[i]);
         if (property_defined_at_or_below(pname, phash, child))
             return 1;
     }
@@ -992,8 +992,8 @@ dbpriv_fix_properties_after_chparent(Var obj, Var old_ancestors, Var new_ancesto
         Object *oc = dbpriv_dereference(child);
         Var _new = new_list(1);
         Var old = new_list(1);
-        _new.v.list[1] = var_ref(child);
-        old.v.list[1] = var_ref(child);
+        _new[1] = var_ref(child);
+        old[1] = var_ref(child);
         if (TYPE_LIST == oc->parents.type) {
             FOR_EACH(parent, oc->parents, i5, c5) {
                 Object *op = dbpriv_find_object(parent.v.obj);

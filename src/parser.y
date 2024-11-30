@@ -1309,9 +1309,9 @@ my_getc(void *data)
     char                c;
 
     code = state->code;
-    if (task_timed_out  ||  state->cur_string > code.v.list[0].v.num)
+    if (task_timed_out  ||  state->cur_string > code.length())
 	return EOF;
-    else if (!(c = code.v.list[state->cur_string].v.str[state->cur_char])) {
+    else if (!(c = code[state->cur_string].v.str[state->cur_char])) {
 	state->cur_string++;
 	state->cur_char = 0;
 	return '\n';

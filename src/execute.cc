@@ -232,7 +232,9 @@ suspend_task(package p)
     for (i = 0; i <= top_activ_stack; i++)
         the_vm->activ_stack[i] = activ_stack[i];
 
-    e = (*p.u.susp.proc) (the_vm, p.u.susp.data);
+    susp_t suspender = std::get<susp_t>(p.u);
+    e = (*suspender.proc)(the_vm, suspender.data);
+
     if (e != E_NONE)
         free_vm(the_vm, 0);
     return e;
@@ -252,7 +254,7 @@ unwind_stack(Finally_Reason why, Var value, enum outcome *outcome)
      * why==FIN_EXIT always returns false
      * why==FIN_ABORT always returns true/OUTCOME_ABORTED
      */
-    Var code = (why == FIN_RAISE ? value.v.list[1] : zero);
+    Var code = (why == FIN_RAISE ? value[1] : zero);
 
     for (;;) {          /* loop over activations */
         activation *a = &(activ_stack[top_activ_stack]);
@@ -262,7 +264,7 @@ unwind_stack(Finally_Reason why, Var value, enum outcome *outcome)
         Var v, *goal = a->base_rt_stack;
 
         if (why == FIN_EXIT)
-            goal += value.v.list[1].v.num;
+            goal += value[1].v.num;
         while (a->top_rt_stack > goal) {    /* loop over rt stack */
             a->top_rt_stack--;
             v = *(a->top_rt_stack);
@@ -303,7 +305,7 @@ unwind_stack(Finally_Reason why, Var value, enum outcome *outcome)
             }
         }
         if (why == FIN_EXIT) {
-            a->pc = value.v.list[2].v.num;
+            a->pc = value[2].v.num;
             free_var(value);
             return 0;
         }
@@ -332,15 +334,18 @@ unwind_stack(Finally_Reason why, Var value, enum outcome *outcome)
                                  bi_func_data);
                 switch (p.kind) {
                     case package::BI_RETURN:
-                        *(a->top_rt_stack++) = p.u.ret;
+                        *(a->top_rt_stack++) = std::get<Var>(p.u);
                         return 0;
                     case package::BI_RAISE:
                         if (a->debug)
                             return raise_error(p, outcome);
                         else {
-                            *(a->top_rt_stack++) = p.u.raise.code;
-                            free_str(p.u.raise.msg);
-                            free_var(p.u.raise.value);
+                            raise_t err = std::get<raise_t>(p.u);
+
+                            *(a->top_rt_stack++) = err.code;
+                            free_str(err.msg);
+                            free_var(err.value);
+                        
                             return 0;
                         }
                     case package::BI_SUSPEND:
@@ -357,14 +362,18 @@ unwind_stack(Finally_Reason why, Var value, enum outcome *outcome)
                             return unwind_stack(FIN_RAISE, value, outcome);
                         }
                     }
-                    case package::BI_CALL:
+                    case package::BI_CALL: {
+                        call_t c = std::get<call_t>(p.u);
+
                         a = &(activ_stack[top_activ_stack]);    /* TOS has changed */
-                        a->bi_func_id = bi_func_id;
-                        a->bi_func_pc = p.u.call.pc;
-                        a->bi_func_data = p.u.call.data;
+                        a->bi_func_id   = bi_func_id;
+                        a->bi_func_pc   = c.pc;
+                        a->bi_func_data = c.data;
+                
                         return 0;
+                    }
                     case package::BI_KILL:
-                        abort_task((abort_reason)p.u.ret.v.num);
+                        abort_task((abort_reason)std::get<Var>(p.u).num());
                         if (outcome)
                             *outcome = OUTCOME_ABORTED;
                         return 1;
@@ -383,22 +392,35 @@ unwind_stack(Finally_Reason why, Var value, enum outcome *outcome)
                     p = call_bi_func(bi_func_id, zero, bi_func_pc, a->progr,
                                      bi_func_data);
                     switch (p.kind) {
-                        case package::BI_RETURN:
-                            free_var(p.u.ret);
+                        case package::BI_RETURN: {
+                            Var ret = std::get<Var>(p.u);
+                            free_var(ret);
                             break;
+                        }
                         case package::BI_RAISE:
-                            free_var(p.u.raise.code);
-                            free_str(p.u.raise.msg);
-                            free_var(p.u.raise.value);
+                        {
+                            raise_t err = std::get<raise_t>(p.u);
+
+                            free_var(err.code);
+                            free_str(err.msg);
+                            free_var(err.value);
+
                             break;
+                        }
                         case package::BI_SUSPEND:
                         case package::BI_KILL:
                             break;
                         case package::BI_CALL:
+                        {
                             free_activation(&activ_stack[top_activ_stack--], 0);
-                            bi_func_pc = p.u.call.pc;
-                            bi_func_data = p.u.call.data;
+
+                            call_t c = std::get<call_t>(p.u);
+
+                            bi_func_pc   = c.pc;
+                            bi_func_data = c.data;
+
                             break;
+                        }
                     }
                 } while (p.kind == package::BI_CALL && bi_func_pc != 0);        /* !tailcall */
             }
@@ -473,43 +495,40 @@ make_stack_list(activation * stack, int start, int end, int include_end,
         Var v;
 
         if (include_end || i != end) {
-            v = r.v.list[j++] = new_list(listlen);
-            v.v.list[1] = anonymizing_var_ref(stack[i]._this, progr);
-            v.v.list[2] = str_ref_to_var(stack[i].verb);
-            v.v.list[3] = Var::new_obj(stack[i].progr);
-            v.v.list[4] = anonymizing_var_ref(stack[i].vloc, progr);
-            v.v.list[5] = Var::new_obj(stack[i].player);
+            v = r[j++] = new_list(listlen);
+            v[1] = anonymizing_var_ref(stack[i]._this, progr);
+            v[2] = str_ref_to_var(stack[i].verb);
+            v[3] = Var::new_obj(stack[i].progr);
+            v[4] = anonymizing_var_ref(stack[i].vloc, progr);
+            v[5] = Var::new_obj(stack[i].player);
             if (line_numbers_too) {
-                v.v.list[include_variables ? listlen - 1 : listlen].type = TYPE_INT;
-                v.v.list[include_variables ? listlen - 1 : listlen].v.num = find_line_number(stack[i].prog,
+                v[include_variables ? listlen - 1 : listlen].type = TYPE_INT;
+                v[include_variables ? listlen - 1 : listlen].v.num = find_line_number(stack[i].prog,
                         (i == 0 ? root_vector
                          : MAIN_VECTOR),
                         stack[i].error_pc);
             }
             if (include_variables) {
-                v.v.list[listlen].type = TYPE_MAP;
-                v.v.list[listlen] = make_rt_var_map(stack[i].rt_env, stack[i].prog->var_names, stack[i].prog->num_var_names);
+                v[listlen].type = TYPE_MAP;
+                v[listlen] = make_rt_var_map(stack[i].rt_env, stack[i].prog->var_names, stack[i].prog->num_var_names);
             }
         }
         if (i != start && stack[i].bi_func_pc) {
-            v = r.v.list[j++] = new_list(listlen);
-            v.v.list[1].type = TYPE_OBJ;
-            v.v.list[1].v.obj = NOTHING;
-            v.v.list[2].type = TYPE_STR;
-            v.v.list[2].v.str = str_dup(name_func_by_num(stack[i].bi_func_id));
-            v.v.list[3].type = TYPE_OBJ;
-            v.v.list[3].v.obj = NOTHING;
-            v.v.list[4].type = TYPE_OBJ;
-            v.v.list[4].v.obj = NOTHING;
-            v.v.list[5].type = TYPE_OBJ;
-            v.v.list[5].v.obj = stack[i].player;
+            v = r[j++] = new_list(listlen);
+
+            v[1] = Var::new_obj(NOTHING);
+            v[2] = str_dup_to_var(name_func_by_num(stack[i].bi_func_id));
+            v[3] = Var::new_obj(NOTHING);
+            v[4] = Var::new_obj(NOTHING);
+            v[5] = Var::new_obj(stack[i].player);
+
             if (line_numbers_too) {
-                v.v.list[include_variables ? listlen - 1 : listlen].type = TYPE_INT;
-                v.v.list[include_variables ? listlen - 1 : listlen].v.num = stack[i].bi_func_pc;
+                v[include_variables ? listlen - 1 : listlen].type = TYPE_INT;
+                v[include_variables ? listlen - 1 : listlen].v.num = stack[i].bi_func_pc;
             }
             if (include_variables) {
-                v.v.list[listlen].type = TYPE_MAP;
-                v.v.list[listlen] = make_rt_var_map(stack[i].rt_env, stack[i].prog->var_names, stack[i].prog->num_var_names);
+                v[listlen].type = TYPE_MAP;
+                v[listlen] = make_rt_var_map(stack[i].rt_env, stack[i].prog->var_names, stack[i].prog->num_var_names);
             }
         }
     }
@@ -535,8 +554,10 @@ save_handler_info(const char *vname, Var args)
 static int
 raise_error(package p, enum outcome *outcome)
 {
+    raise_t err = std::get<raise_t>(p.u);
+
     /* ASSERT: p.kind == package::BI_RAISE */
-    int handler_activ = find_handler_activ(p.u.raise.code);
+    int handler_activ = find_handler_activ(err.code);
     Finally_Reason why;
     Var value;
 
@@ -546,14 +567,14 @@ raise_error(package p, enum outcome *outcome)
     } else {            /* uncaught exception */
         why = FIN_UNCAUGHT;
         value = new_list(5);
-        value.v.list[5] = error_backtrace_list(p.u.raise.msg);
+        value[5] = error_backtrace_list(err.msg);
         handler_activ = 0;  /* get entire stack in list */
     }
-    value.v.list[1] = p.u.raise.code;
-    value.v.list[2].type = TYPE_STR;
-    value.v.list[2].v.str = p.u.raise.msg;
-    value.v.list[3] = p.u.raise.value;
-    value.v.list[4] = make_stack_list(activ_stack, handler_activ,
+
+    value[1] = err.code;
+    value[2] = str_dup_to_var(err.msg);
+    value[3] = err.value;
+    value[4] = make_stack_list(activ_stack, handler_activ,
                                       top_activ_stack, 1,
                                       root_activ_vector, 1, server_flag_option_cached(SVO_INCLUDE_RT_VARS),
                                       NOTHING);
@@ -588,12 +609,12 @@ abort_task(enum abort_reason reason)
 
 save_hinfo:
             value = new_list(3);
-            value.v.list[1].type = TYPE_STR;
-            value.v.list[1].v.str = str_dup(htag);
-            value.v.list[2] = make_stack_list(activ_stack, 0, top_activ_stack, 1,
+            value[1].type = TYPE_STR;
+            value[1].v.str = str_dup(htag);
+            value[2] = make_stack_list(activ_stack, 0, top_activ_stack, 1,
                                               root_activ_vector, 1, server_flag_option_cached(SVO_INCLUDE_RT_VARS),
                                               NOTHING);
-            value.v.list[3] = error_backtrace_list(msg);
+            value[3] = error_backtrace_list(msg);
             save_handler_info("handle_task_timeout", value);
         /* fall through */
 
@@ -885,7 +906,7 @@ run(char raise, enum error resumption_error, Var * result)
         PUSH(error_var);                                    \
     } while (0)
 
-    /* NOTE: the_msg will be freed */
+/* NOTE: the_msg will be freed */
 #define PUSH_ERROR_WITH_VALUE(the_err, the_msg, the_value)                        \
     do {                                                                          \
         RAISE_ERROR_WITH_VALUE(the_err, the_msg, the_value); /* may not return */ \
@@ -938,8 +959,8 @@ run(char raise, enum error resumption_error, Var * result)
         }                                                                                        \
         char *error_message = str_dup(reset_stream(error_stream));                               \
         Var value = new_list(2);                                                                 \
-        value.v.list[1] = the_object;                                                            \
-        value.v.list[2] = the_missing;                                                           \
+        value[1] = the_object;                                                            \
+        value[2] = the_missing;                                                           \
         PUSH_ERROR_WITH_VALUE(the_err, error_message, value);                                    \
     } while (0)
 
@@ -1104,12 +1125,11 @@ do_test:
                     free_var(map);
                     PUSH_TYPE_MISMATCH(8, key.type, TYPE_STR, TYPE_INT, TYPE_OBJ, TYPE_ERR, TYPE_FLOAT, TYPE_ANON, TYPE_WAIF, TYPE_BOOL);
                 } else {
-                    r = mapinsert(map, var_ref(key), var_ref(value));
-                    if (value_bytes(r) <= server_int_option_cached(SVO_MAX_MAP_VALUE_BYTES))
+                    if((value_bytes(map) + value_bytes(key) + value_bytes(value)) <= server_int_option_cached(SVO_MAX_MAP_VALUE_BYTES)) {
+                        r = mapinsert(map, key, value);
                         PUSH(r);
-                    else {
-                        free_var(r);
-                        PUSH_ERROR_UNLESS_QUOTA(E_QUOTA);
+                    } else {
+                        PUSH_ERROR(E_QUOTA);
                     }
                 }
             }
@@ -1135,12 +1155,11 @@ do_test:
                     free_var(tail);
                     PUSH_TYPE_MISMATCH(1, list.type, TYPE_LIST);
                 } else {
-                    r = listappend(list, tail);
-                    if (value_bytes(r) <= server_int_option_cached(SVO_MAX_LIST_VALUE_BYTES))
+                    if((value_bytes(list) + value_bytes(tail)) <= server_int_option_cached(SVO_MAX_LIST_VALUE_BYTES)) {
+                        r = listappend(list, tail);
                         PUSH(r);
-                    else {
-                        free_var(r);
-                        PUSH_ERROR_UNLESS_QUOTA(E_QUOTA);
+                    } else {
+                        PUSH_ERROR(E_QUOTA);
                     }
                 }
             }
@@ -1157,12 +1176,11 @@ do_test:
                     free_var(tail);
                     PUSH_TYPE_MISMATCH(1, tail.type != TYPE_LIST ? tail.type : list.type, TYPE_LIST);
                 } else {
-                    r = listconcat(list, tail);
-                    if (value_bytes(r) <= server_int_option_cached(SVO_MAX_LIST_VALUE_BYTES))
+                    if((value_bytes(list) + value_bytes(tail)) <= server_int_option_cached(SVO_MAX_LIST_VALUE_BYTES)) {
+                        r = listconcat(list, tail);
                         PUSH(r);
-                    else {
-                        free_var(r);
-                        PUSH_ERROR_UNLESS_QUOTA(E_QUOTA);
+                    } else {
+                        PUSH_ERROR(E_QUOTA);
                     }
                 }
             }
@@ -1181,6 +1199,7 @@ do_test:
                 list = POP();   /* lhs except last index, should be list or str */
                 /* whole thing should mean list[index] = value OR
                  * map[key] = value */
+
 #ifdef WAIF_DICT
                 if (list.type == TYPE_WAIF) {
                     Objid _class;
@@ -1188,8 +1207,8 @@ do_test:
                     enum error err = E_NONE;
 
                     args = new_list(2);
-                    args.v.list[1] = var_ref(index);
-                    args.v.list[2] = var_ref(value);
+                    args[1] = var_ref(index);
+                    args[2] = var_ref(value);
 
                     _class = list.v.waif->_class;
                     if (!valid(_class)) {
@@ -1224,7 +1243,7 @@ do_test:
                         free_var(list);
                         PUSH_ERROR(E_TYPE);
                     } else if ((list.type == TYPE_LIST
-                                && (index.v.num < 1 || index.v.num > list.v.list[0].v.num /* size */))
+                                && (index.v.num < 1 || index.v.num > list.length() /* size */))
                                || (list.type == TYPE_STR
                                    && (index.v.num < 1 || index.v.num > (int) memo_strlen(list.v.str)))) {
                         free_var(value);
@@ -1238,21 +1257,18 @@ do_test:
                         free_var(list);
                         PUSH_ERROR(E_INVARG);
                     } else if (list.type == TYPE_LIST) {
-                        Var res = listset(list, value, index.v.num);
-                        if (value_bytes(res) <= server_int_option_cached(SVO_MAX_LIST_VALUE_BYTES))
-                            PUSH(res);
-                        else {
-                            free_var(res);
-                            PUSH_ERROR_UNLESS_QUOTA(E_QUOTA);
+                        if((value_bytes(list) + value_bytes(value) - value_bytes(list[index])) <= server_int_option_cached(SVO_MAX_LIST_VALUE_BYTES)) {
+                            Var r = listset(list, value, index.v.num);
+                            PUSH(r);
+                        } else {
+                            PUSH_ERROR(E_QUOTA);
                         }
                     } else if (list.type == TYPE_MAP) {
-                        Var res = mapinsert(list, var_dup(index), var_dup(value));
-
-                        if (value_bytes(res) <= server_int_option_cached(SVO_MAX_MAP_VALUE_BYTES))
-                            PUSH(res);
-                        else {
-                            free_var(res);
-                            PUSH_ERROR_UNLESS_QUOTA(E_QUOTA);
+                        if((value_bytes(list) + value_bytes(index) + value_bytes(value)) <= server_int_option_cached(SVO_MAX_MAP_VALUE_BYTES)) {
+                            Var r = mapinsert(list, index, value);
+                            PUSH(r);
+                        } else {
+                            PUSH_ERROR(E_QUOTA);
                         }
                     } else {    /* TYPE_STR */
                         char *tmp_str = str_dup(list.v.str);
@@ -1270,7 +1286,7 @@ do_test:
                 Var list;
 
                 list = new_list(1);
-                list.v.list[1] = POP();
+                list[1] = POP();
                 PUSH(list);
             }
             break;
@@ -1599,7 +1615,7 @@ finish_comparison:
                     enum error err = E_NONE;
 
                     args = new_list(1);
-                    args.v.list[1] = var_ref(index);
+                    args[1] = var_ref(index);
 
                     _class = list.v.waif->_class;
                     if (!valid(_class)) {
@@ -1642,12 +1658,12 @@ finish_comparison:
                             free_var(list);
                         }
                     } else if (list.type == TYPE_LIST) {
-                        if (index.v.num <= 0 || index.v.num > list.v.list[0].v.num) {
+                        if (index.v.num <= 0 || index.v.num > list.length()) {
                             free_var(index);
                             free_var(list);
                             PUSH_ERROR(E_RANGE);
                         } else {
-                            PUSH(var_ref(list.v.list[index.v.num]));
+                            PUSH(var_ref(list[index.v.num]));
                             free_var(index);
                             free_var(list);
                         }
@@ -1705,11 +1721,11 @@ finish_comparison:
                     if (index.type != TYPE_INT) {
                         PUSH_TYPE_MISMATCH(1, index.type, TYPE_INT);
                     } else if (index.v.num <= 0 ||
-                               index.v.num > list.v.list[0].v.num) {
+                               index.v.num > list.length()) {
                         PUSH_ERROR(E_RANGE);
                     } else {
-                        PUSH(list.v.list[index.v.num]);
-                        list.v.list[index.v.num].type = TYPE_NONE;
+                        PUSH(list[index.v.num]);
+                        list[index.v.num].type = TYPE_NONE;
                     }
                 } else {
                     PUSH_TYPE_MISMATCH(2, list.type, TYPE_LIST, TYPE_MAP);
@@ -1796,7 +1812,7 @@ finish_comparison:
                     }
                 } else {
                     int len = (base.type == TYPE_STR ? memo_strlen(base.v.str)
-                               : base.v.list[0].v.num);
+                               : base.length());
                     if (from.v.num <= to.v.num
                             && (from.v.num <= 0 || from.v.num > len
                                 || to.v.num <= 0 || to.v.num > len)) {
@@ -2228,7 +2244,7 @@ else if (obj.type == TYPE_##t1) {           \
 
                     switch (p.kind) {
                         case package::BI_RETURN:
-                            PUSH(p.u.ret);
+                            PUSH(std::get<Var>(p.u));
                             break;
                         case package::BI_RAISE:
                             if (RUN_ACTIV.debug) {
@@ -2237,17 +2253,24 @@ else if (obj.type == TYPE_##t1) {           \
                                 else
                                     LOAD_STATE_VARIABLES();
                             } else {
-                                PUSH(p.u.raise.code);
-                                free_str(p.u.raise.msg);
-                                free_var(p.u.raise.value);
+                                raise_t err = std::get<raise_t>(p.u);
+
+                                PUSH(err.code);
+                                free_str(err.msg);
+                                free_var(err.value);
                             }
                             break;
-                        case package::BI_CALL:
+                        case package::BI_CALL: 
+                        {
                             /* another activ has been pushed onto activ_stack */
-                            RUN_ACTIV.bi_func_id = func_id;
-                            RUN_ACTIV.bi_func_data = p.u.call.data;
-                            RUN_ACTIV.bi_func_pc = p.u.call.pc;
+                            call_t c = std::get<call_t>(p.u);
+
+                            RUN_ACTIV.bi_func_id   = func_id;
+                            RUN_ACTIV.bi_func_data = c.data;
+                            RUN_ACTIV.bi_func_pc   = c.pc;
+
                             break;
+                        }
                         case package::BI_SUSPEND:
                         {
                             enum error e = suspend_task(p);
@@ -2260,7 +2283,8 @@ else if (obj.type == TYPE_##t1) {           \
                         break;
                         case package::BI_KILL:
                             STORE_STATE_VARIABLES();
-                            abort_task((abort_reason)p.u.ret.v.num);
+
+                            abort_task((abort_reason)std::get<Var>(p.u).num());
                             return OUTCOME_ABORTED;
                             /* NOTREACHED */
                     }
@@ -2327,33 +2351,37 @@ else if (obj.type == TYPE_##t1) {           \
                                 free_var(value);
                                 PUSH_ERROR(E_RANGE);
                             } else {
-                                maprangeset(base, iterfrom.v.num, iterto.v.num, value, &res);
-                                free_var(to);
-                                free_var(from);
-                                free_var(iterto);
-                                free_var(iterfrom);
-                                if (value_bytes(res) <= server_int_option_cached(SVO_MAX_MAP_VALUE_BYTES))
+                                // TODO: Better calculation for this
+                                if((value_bytes(base) + value_bytes(value)) <=  server_int_option_cached(SVO_MAX_MAP_VALUE_BYTES)) {
+                                    maprangeset(base, iterfrom.v.num, iterto.v.num, value, &res);
+                                    free_var(to);
+                                    free_var(from);
+                                    free_var(iterto);
+                                    free_var(iterfrom);
                                     PUSH(res);
-                                else {
-                                    free_var(res);
-                                    PUSH_ERROR_UNLESS_QUOTA(E_QUOTA);
+                                } else {
+                                    free_var(to);
+                                    free_var(from);
+                                    free_var(iterto);
+                                    free_var(iterfrom);
+                                    PUSH_ERROR(E_QUOTA);
                                 }
                             }
                         } else if (base.type == TYPE_LIST) {
                             Var res;
-                            if (from.v.num > base.v.list[0].v.num + 1 || to.v.num < 0) {
+                            if (from.v.num > base.length() + 1 || to.v.num < 0) {
                                 free_var(to);
                                 free_var(from);
                                 free_var(base);
                                 free_var(value);
                                 PUSH_ERROR(E_RANGE);
                             } else {
-                                res = listrangeset(base, from.v.num, to.v.num, value);
-                                if (value_bytes(res) <= server_int_option_cached(SVO_MAX_LIST_VALUE_BYTES))
+                                // TODO: Better calculation for this
+                                if((value_bytes(base) + value_bytes(value)) <= server_int_option_cached(SVO_MAX_LIST_VALUE_BYTES)) {
+                                    res = listrangeset(base, from.v.num, to.v.num, value);
                                     PUSH(res);
-                                else {
-                                    free_var(res);
-                                    PUSH_ERROR_UNLESS_QUOTA(E_QUOTA);
+                                } else {
+                                    PUSH_ERROR(E_QUOTA);
                                 }
                             }
                         } else {    /* TYPE_STR */
@@ -2389,7 +2417,7 @@ else if (obj.type == TYPE_##t1) {           \
                             PUSH(v);
                         } else if (item.type == TYPE_LIST) {
                             v.type = TYPE_INT;
-                            v.v.num = item.v.list[0].v.num > 0 ? 1 : 0;
+                            v.v.num = item.length() > 0 ? 1 : 0;
                             PUSH(v);
                         } else if ((item.type == TYPE_MAP) && mapfirst(item, &v) > 0) {
                             RUN_ACTIV.temp = Var::new_bool(true);
@@ -2411,7 +2439,7 @@ else if (obj.type == TYPE_##t1) {           \
                             PUSH(v);
                         } else if (item.type == TYPE_LIST) {
                             v.type = TYPE_INT;
-                            v.v.num = item.v.list[0].v.num;
+                            v.v.num = item.length();
                             PUSH(v);
                         } else if (item.type == TYPE_MAP && maplast(item, &v) > 0) {
                             RUN_ACTIV.temp = Var::new_bool(true);
@@ -2451,7 +2479,7 @@ else if (obj.type == TYPE_##t1) {           \
                         list = TOP_RT_VALUE;
                         if (list.type != TYPE_LIST)
                             e = E_TYPE;
-                        else if ((len = list.v.list[0].v.num) < nreq
+                        else if ((len = list.length()) < nreq
                                  || (!have_rest && len > nargs))
                             e = E_ARGS;
 
@@ -2482,13 +2510,13 @@ else if (obj.type == TYPE_##t1) {           \
                                 } else if (label == 0) {    /* required */
                                     free_var(RUN_ACTIV.rt_env[id]);
                                     RUN_ACTIV.rt_env[id] =
-                                        var_ref(list.v.list[i + offset]);
+                                        var_ref(list[i + offset]);
                                 } else {    /* optional */
                                     if (nopt_avail > 0) {
                                         nopt_avail--;
                                         free_var(RUN_ACTIV.rt_env[id]);
                                         RUN_ACTIV.rt_env[id] =
-                                            var_ref(list.v.list[i + offset]);
+                                            var_ref(list[i + offset]);
                                     } else {
                                         offset--;
                                         if (where == 0 && label != 1)
@@ -2608,13 +2636,11 @@ else if (obj.type == TYPE_##t1) {           \
                     /* fall thru */
                     case EOP_EXIT:
                     {
-                        Var v;
+                        Var v = new_list(2);
 
-                        v = new_list(2);
-                        v.v.list[1].type = TYPE_INT;
-                        v.v.list[1].v.num = READ_BYTES(bv, bc.numbytes_stack);
-                        v.v.list[2].type = TYPE_INT;
-                        v.v.list[2].v.num = READ_BYTES(bv, bc.numbytes_label);
+                        v[1] = Var::new_int(READ_BYTES(bv, bc.numbytes_stack));
+                        v[2] = Var::new_int(READ_BYTES(bv, bc.numbytes_label));
+
                         STORE_STATE_VARIABLES();
                         (void) unwind_stack(FIN_EXIT, v, nullptr);
                         LOAD_STATE_VARIABLES();
@@ -2638,7 +2664,7 @@ else if (obj.type == TYPE_##t1) {           \
                         } else if (BASE.type == TYPE_STR || BASE.type == TYPE_LIST) {
                             int len = (BASE.type == TYPE_STR
                                        ? memo_strlen(BASE.v.str)
-                                       : BASE.v.list[0].v.num);
+                                       : BASE.length());
                             if (ITER.type == TYPE_NONE) {
                                 free_var(ITER);
                                 ITER = Var::new_int(1);
@@ -2651,7 +2677,7 @@ else if (obj.type == TYPE_##t1) {           \
                                 free_var(RUN_ACTIV.rt_env[id]);
                                 RUN_ACTIV.rt_env[id] = (BASE.type == TYPE_STR)
                                                        ? strget(BASE, ITER.v.num)
-                                                       : var_ref(BASE.v.list[ITER.v.num]);
+                                                       : var_ref(BASE[ITER.v.num]);
                                 ITER.v.num++;   /* increment iter */
                             }
                         } else if (BASE.type == TYPE_MAP) {
@@ -2694,7 +2720,7 @@ else if (obj.type == TYPE_##t1) {           \
                         } else if (BASE.type == TYPE_STR || BASE.type == TYPE_LIST) {
                             int len = (BASE.type == TYPE_STR
                                        ? memo_strlen(BASE.v.str)
-                                       : BASE.v.list[0].v.num);
+                                       : BASE.length());
                             if (ITER.type == TYPE_NONE) {
                                 free_var(ITER);
                                 ITER = Var::new_int(1);
@@ -2707,7 +2733,7 @@ else if (obj.type == TYPE_##t1) {           \
                                 free_var(RUN_ACTIV.rt_env[id]);
                                 RUN_ACTIV.rt_env[id] = (BASE.type == TYPE_STR)
                                                        ? strget(BASE, ITER.v.num)
-                                                       : var_ref(BASE.v.list[ITER.v.num]);
+                                                       : var_ref(BASE[ITER.v.num]);
                                 free_var(RUN_ACTIV.rt_env[index]);
                                 RUN_ACTIV.rt_env[index] = var_ref(ITER);
                                 ITER.v.num++;   /* increment iter */
@@ -2786,6 +2812,7 @@ else if (obj.type == TYPE_##t1) {           \
                         if (lhs.type != TYPE_INT || rhs.type != TYPE_INT) {
                             ans.type = TYPE_ERR;
                             ans.v.err = E_TYPE;
+
                             lhs_type = lhs.type;
                             rhs_type = rhs.type;
                         } else if (rhs.v.num > sizeof(Num) * CHAR_BIT || rhs.v.num < 0) {
@@ -2794,17 +2821,14 @@ else if (obj.type == TYPE_##t1) {           \
                             lhs_type = lhs.type;
                             rhs_type = rhs.type;
                         } else if (rhs.v.num == sizeof(Num) * CHAR_BIT) {
-                            ans.type = TYPE_INT;
-                            ans.v.num = 0;
+                            ans = Var::new_int(0);
                         } else if (rhs.v.num == 0) {
-                            ans.type = TYPE_INT;
-                            ans.v.num = lhs.v.num;
+                            ans = Var::new_int(lhs.num());
                         } else {
-                            ans.type = TYPE_INT;
                             if (eop == EOP_BITSHL)
-                                ans.v.num = lhs.v.num << rhs.v.num;
+                                ans = Var::new_int(lhs.num() << rhs.num());
                             else if (eop == EOP_BITSHR)
-                                ans.v.num = (UNum)lhs.v.num >> rhs.v.num;
+                                ans = Var::new_int(lhs.num() >> rhs.num());
                             else
                                 errlog("RUN: Impossible opcode in bitwise ops: %d\n", eop);
                         }
@@ -2829,8 +2853,7 @@ else if (obj.type == TYPE_##t1) {           \
 
                         arg = POP();
                         if (arg.type == TYPE_INT) {
-                            ans.type = TYPE_INT;
-                            ans.v.num = ~arg.v.num;
+                            ans = Var::new_int(~arg.num());
                         } else {
                             ans.type = TYPE_ERR;
                             ans.v.err = E_TYPE;
@@ -3101,21 +3124,21 @@ run_interpreter(char raise, enum error e,
         {
             Var lag_info = new_list(2);
             if (ret != OUTCOME_DONE) {
-                lag_info.v.list[1] = make_stack_list(activ_stack, 0, top_activ_stack, 1, root_activ_vector, 1, server_flag_option_cached(SVO_INCLUDE_RT_VARS), progr);
+                lag_info[1] = make_stack_list(activ_stack, 0, top_activ_stack, 1, root_activ_vector, 1, server_flag_option_cached(SVO_INCLUDE_RT_VARS), progr);
             } else {
                 /* This is a tricky situation. The stack has already been unwound, so we can't get the line number, programmer, player, or 'this'.
                    So we do the best we can with the information we do have. The alternative would be to store the stack list every time
                    regardless of lag, but that would be a huge waste. Seeing as how, previously, you got no information at all, I think object:verb
                    will be good enough. */
-                lag_info.v.list[1] = new_list(6);
-                lag_info.v.list[1].v.list[1] = var_ref(nothing);
-                lag_info.v.list[1].v.list[2] = str_ref_to_var(verb);
-                lag_info.v.list[1].v.list[3] = var_ref(nothing);
-                lag_info.v.list[1].v.list[4] = Var::new_obj(object);
-                lag_info.v.list[1].v.list[5] = var_ref(nothing);
-                lag_info.v.list[1].v.list[6] = var_ref(nothing);
+                lag_info[1] = new_list(6);
+                lag_info[1][1] = var_ref(nothing);
+                lag_info[1][2] = str_ref_to_var(verb);
+                lag_info[1][3] = var_ref(nothing);
+                lag_info[1][4] = Var::new_obj(object);
+                lag_info[1][5] = var_ref(nothing);
+                lag_info[1][6] = var_ref(nothing);
             }
-            lag_info.v.list[2] = total_cputime;
+            lag_info[2] = total_cputime;
             do_server_verb_task(Var::new_obj(SYSTEM_OBJECT), "handle_lagging_task", lag_info, handle, activ_stack[0].player, "", nullptr, 0);
         }
     }
@@ -3125,7 +3148,7 @@ run_interpreter(char raise, enum error e,
     postmortem = mapinsert(postmortem, var_ref(map_time), total_cputime);
     finished_tasks = listappend(finished_tasks, postmortem);
 
-    while (finished_tasks.v.list[0].v.num > server_int_option("finished_tasks_limit", SAVE_FINISHED_TASKS) && finished_tasks.v.list[0].v.num > 1)
+    while (finished_tasks.length() > server_int_option("finished_tasks_limit", SAVE_FINISHED_TASKS) && finished_tasks.length() > 1)
         finished_tasks = listdelete(finished_tasks, 1);
 #endif /* SAVE_FINISHED_TASKS */
 
@@ -3152,10 +3175,10 @@ run_interpreter(char raise, enum error e,
                 return OUTCOME_ABORTED; /* original ret value */
             }
         }
-        i = args.v.list[0].v.num;
-        traceback = args.v.list[i]; /* traceback is always the last argument */
-        for (i = 1; i <= traceback.v.list[0].v.num; i++)
-            notify(activ_stack[0].player, traceback.v.list[i].v.str);
+        i = args.length();
+        traceback = args[i]; /* traceback is always the last argument */
+        for (i = 1; i <= traceback.length(); i++)
+            notify(activ_stack[0].player, traceback[i].v.str);
     }
 
     free_var(args);
@@ -3413,12 +3436,12 @@ bf_call_function(Var arglist, Byte next, void *vdata, Objid progr)
     struct cf_state *s;
 
     if (next == 1) {        /* first call */
-        const char *fname = arglist.v.list[1].v.str;
+        const char *fname = arglist[1].v.str;
 
         fnum = number_func_by_name(fname);
         if (fnum == FUNC_NOT_FOUND) {
             p = make_raise_pack(E_INVARG, "Unknown built-in function",
-                                var_ref(arglist.v.list[1]));
+                                var_ref(arglist[1]));
             free_var(arglist);
         } else {
             arglist = listdelete(arglist, 1);
@@ -3426,7 +3449,7 @@ bf_call_function(Var arglist, Byte next, void *vdata, Objid progr)
         }
     } else {            /* return to function */
         s = (struct cf_state *)vdata;
-        fnum = s->fnum;
+        fnum = s->fnum;        
         p = call_bi_func(fnum, arglist, next, progr, s->data);
         free_data(s);
     }
@@ -3434,8 +3457,12 @@ bf_call_function(Var arglist, Byte next, void *vdata, Objid progr)
     if (p.kind == package::BI_CALL) {
         s = (struct cf_state *)alloc_data(sizeof(struct cf_state));
         s->fnum = fnum;
-        s->data = p.u.call.data;
-        p.u.call.data = s;
+
+        call_t c = std::get<call_t>(p.u);
+
+        s->data = c.data;
+        c.data  = s;
+        p.u     = c;
     }
     return p;
 }
@@ -3472,19 +3499,17 @@ static package
 bf_raise(Var arglist, Byte next, void *vdata, Objid progr)
 {
     package p;
-    int nargs = arglist.v.list[0].v.num;
-    Var code = var_ref(arglist.v.list[1]);
+    int nargs = arglist.length();
+    Var code = var_ref(arglist[1]);
     const char *msg = (nargs >= 2
-                       ? str_ref(arglist.v.list[2].v.str)
+                       ? str_ref(arglist[2].v.str)
                        : value2str(code));
     Var value;
 
-    value = (nargs >= 3 ? var_ref(arglist.v.list[3]) : zero);
+    value = (nargs >= 3 ? var_ref(arglist[3]) : zero);
     free_var(arglist);
-    p.kind = package::BI_RAISE;
-    p.u.raise.code = code;
-    p.u.raise.msg = msg;
-    p.u.raise.value = value;
+
+    p = package{.kind = package::BI_RAISE, .u = raise_t{.code = code, .value = value, .msg = msg}};
 
     return p;
 }
@@ -3493,12 +3518,12 @@ static package
 bf_suspend(Var arglist, Byte next, void *vdata, Objid progr)
 {
     static double seconds, *secondsp = nullptr;
-    int nargs = arglist.v.list[0].v.num;
+    int nargs = arglist.length();
 
     if (nargs >= 1) {
-        seconds = arglist.v.list[1].type == TYPE_INT ?
-                  arglist.v.list[1].v.num :
-                  arglist.v.list[1].v.fnum;
+        seconds = arglist[1].type == TYPE_INT ?
+                  arglist[1].v.num :
+                  arglist[1].v.fnum;
         secondsp = &seconds;
     } else {
         secondsp = nullptr;
@@ -3523,19 +3548,19 @@ bf_yield_if_needed(Var arglist, Byte next, void *vdata, Objid progr)
 {
     static double seconds, *secondsp = nullptr;
     int min_ticks, min_seconds;
-    int nargs = arglist.v.list[0].v.num;
+    int nargs = arglist.length();
 
     if (nargs >= 1)
-        seconds = arglist.v.list[1].type == TYPE_INT ?
-                  arglist.v.list[1].v.num :
-                  arglist.v.list[1].v.fnum;
+        seconds = arglist[1].type == TYPE_INT ?
+                  arglist[1].v.num :
+                  arglist[1].v.fnum;
     else
         seconds = 0;
 
     secondsp = &seconds;
 
-    min_ticks = (nargs >= 2 ? arglist.v.list[2].v.num : 2000);
-    min_seconds = (nargs >= 3 ? arglist.v.list[3].v.num : 2);
+    min_ticks = (nargs >= 2 ? arglist[2].v.num : 2000);
+    min_seconds = (nargs >= 3 ? arglist[3].v.num : 2);
 
     free_var(arglist);
 
@@ -3553,13 +3578,13 @@ bf_yield_if_needed(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_read(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* ([object [, non_blocking]]) */
-    int argc = arglist.v.list[0].v.num;
+    int argc = arglist.length();
     static Objid connection;
     int non_blocking = (argc >= 2
-                        && is_true(arglist.v.list[2]));
+                        && is_true(arglist[2]));
 
     if (argc >= 1)
-        connection = arglist.v.list[1].v.obj;
+        connection = arglist[1].v.obj;
     else
         connection = activ_stack[0].player;
     free_var(arglist);
@@ -3591,13 +3616,13 @@ bf_read(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_read_http(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* ("request" | "response" [, object]) */
-    int argc = arglist.v.list[0].v.num;
+    int argc = arglist.length();
     static Objid connection;
     int request;
 
-    if (!strcasecmp(arglist.v.list[1].v.str, "request"))
+    if (!strcasecmp(arglist[1].v.str, "request"))
         request = 1;
-    else if (!strcasecmp(arglist.v.list[1].v.str, "response"))
+    else if (!strcasecmp(arglist[1].v.str, "response"))
         request = 0;
     else {
         free_var(arglist);
@@ -3605,7 +3630,7 @@ bf_read_http(Var arglist, Byte next, void *vdata, Objid progr)
     }
 
     if (argc > 1)
-        connection = arglist.v.list[2].v.obj;
+        connection = arglist[2].v.obj;
     else
         connection = activ_stack[0].player;
 
@@ -3668,7 +3693,7 @@ static package
 bf_set_task_perms(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (player) */
     /* warning!!  modifies top activation */
-    Objid oid = arglist.v.list[1].v.obj;
+    Objid oid = arglist[1].v.obj;
 
     free_var(arglist);
 
@@ -3707,8 +3732,8 @@ bf_callers(Var arglist, Byte next, void *vdata, Objid progr)
 {
     int line_numbers_too = 0;
 
-    if (arglist.v.list[0].v.num >= 1)
-        line_numbers_too = is_true(arglist.v.list[1]);
+    if (arglist.length() >= 1)
+        line_numbers_too = is_true(arglist[1]);
     free_var(arglist);
 
     return make_var_pack(make_stack_list(activ_stack, 0, top_activ_stack, 0,
@@ -3719,10 +3744,10 @@ bf_callers(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_task_stack(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    int nargs = arglist.v.list[0].v.num;
-    int id = arglist.v.list[1].v.num;
-    int line_numbers_too = (nargs >= 2 && is_true(arglist.v.list[2]));
-    bool stack_vars = (nargs >= 3 && is_true(arglist.v.list[3]));
+    int nargs = arglist.length();
+    int id = arglist[1].v.num;
+    int line_numbers_too = (nargs >= 2 && is_true(arglist[2]));
+    bool stack_vars = (nargs >= 3 && is_true(arglist[3]));
     vm the_vm = find_suspended_task(id);
     Objid owner = (the_vm ? progr_of_cur_verb(the_vm) : NOTHING);
 
@@ -3797,7 +3822,7 @@ write_activ_as_pi(activation a)
     dbio_write_var(a._this);
     dbio_write_var(a.vloc);
     dbio_write_num(a.threaded); // Apparently adding things to the beginning is easier for backward compatibility...
-    dbio_printf("%" PRIdN " -7 -8 %" PRIdN " -9 %" PRIdN " %" PRIdN " -10 %d\n", a.recv, a.player, a.progr, a.vloc, a.debug);
+    dbio_printf("%" PRIdN " -7 -8 %" PRIdN " -9 %" PRIdN " %" PRIdN " -10 %d\n", a.recv, a.player, a.progr, a.vloc.v.obj, a.debug);
     dbio_write_string("No");
     dbio_write_string("More");
     dbio_write_string("Parse");
@@ -4128,12 +4153,12 @@ type_mismatch_value(int n_args, ...)
 
     for (int x = 1; x <= n_args; x++) {
         var_type the_var = (var_type)va_arg(args, int);
-        expected_types.v.list[x] = Var::new_int(the_var);
+        expected_types[x] = Var::new_int(the_var);
     }
     va_end(args);
 
-    value_var.v.list[1] = expected_types;
-    value_var.v.list[2] = Var::new_int(mismatch & TYPE_DB_MASK);
+    value_var[1] = expected_types;
+    value_var[2] = Var::new_int(mismatch & TYPE_DB_MASK);
 
     return value_var;
 }

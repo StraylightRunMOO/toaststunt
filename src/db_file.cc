@@ -202,7 +202,7 @@ write_propdef(Propdef * p)
 static void
 read_propval(Pval * p)
 {
-    p->var = dbio_read_var();
+    p->var   = dbio_read_var();
     p->owner = dbio_read_objid();
     p->perms = dbio_read_num();
 }
@@ -280,7 +280,7 @@ v4_read_object(void)
 
     nprops = dbio_read_num();
     if (nprops)
-        o->propval = (Pval *)mymalloc(nprops * sizeof(Pval), M_PVAL);
+        o->propval = (Pval *)mymalloc(nprops * sizeof(Pval), M_PVAL); // o->propval = (Pval *)mycalloc(nprops, sizeof(Pval), M_PVAL);
     else
         o->propval = nullptr;
 
@@ -342,8 +342,7 @@ ng_read_object(int anonymous)
         o->last_move = new_map(0);
 
     o->contents = dbio_read_var();
-
-    o->parents = dbio_read_var();
+    o->parents  = dbio_read_var();
     o->children = dbio_read_var();
 
     o->verbdefs = nullptr;
@@ -460,14 +459,14 @@ v4_validate_hierarchies(void)
                 o->next = NOTHING;
                 fixed_nexts++;
             }
-#       define CHECK(field, name)                   \
-    {                               \
-        if (o->field != NOTHING                 \
-                && !dbv4_find_object(o->field)) {           \
+#       define CHECK(field, name)                                                   \
+    {                                                                               \
+        if (o->field != NOTHING                                                     \
+                && !dbv4_find_object(o->field)) {                                   \
             errlog("VALIDATE: #%" PRIdN ".%s = #%" PRIdN " <invalid> ... fixed.\n", \
-                   oid, name, o->field);            \
-            o->field = NOTHING;                 \
-        }                           \
+                   oid, name, o->field);                                            \
+            o->field = NOTHING;                                                     \
+        }                                                                           \
     }
 
             CHECK(parent, "parent");
@@ -632,7 +631,7 @@ ng_validate_hierarchies()
                 if (tmp.v.obj != NOTHING            \
                         && !dbpriv_find_object(tmp.v.obj)) {    \
                     errlog("VALIDATE: #%" PRIdN ".%s = #%" PRIdN " <invalid> ... removed.\n", \
-                           oid, name, tmp);         \
+                           oid, name, tmp.v.obj);         \
                     o->field = setremove(o->field, tmp);    \
                 }                       \
             }                           \
@@ -666,15 +665,15 @@ ng_validate_hierarchies()
         Object *o = dbpriv_find_object(oid);
         MAYBE_LOG_PROGRESS;
         if (o) {
-#           define CHECK(start, func, name)             \
-    {                               \
-        Var all = func(start, false);               \
-        if (ismember(start, all, 1)) {              \
-            errlog("VALIDATE: Cycle in %s chain of #%" PRIdN ".\n", \
-                   name, oid);              \
-            broken = 1;                 \
-        }                           \
-        free_var(all);                      \
+#           define CHECK(start, func, name)                          \
+    {                                                                \
+        Var all = func(start, false);                                \
+        if (ismember(start, all, 1)) {                               \
+            errlog("VALIDATE: Cycle in %s chain of #%" PRIdN ".\n",  \
+                   name, oid);                                       \
+            broken = 1;                                              \
+        }                                                            \
+        free_var(all);                                               \
     }
 
             CHECK(Var::new_obj(oid), db_ancestors, "parent");
@@ -866,8 +865,8 @@ read_db_file(void)
 
     user_list = new_list(nusers);
     for (i = 1; i <= nusers; i++) {
-        user_list.v.list[i].type = TYPE_OBJ;
-        user_list.v.list[i].v.obj = dbio_read_objid();
+        user_list[i].type = TYPE_OBJ;
+        user_list[i].v.obj = dbio_read_objid();
     }
     dbpriv_set_all_users(user_list);
 
@@ -1036,8 +1035,8 @@ write_db_file(const char *reason)
 
         dbio_printf("%" PRIdN "\n", listlength(user_list));
 
-        for (i = 1; i <= user_list.v.list[0].v.num; i++)
-            dbio_write_objid(user_list.v.list[i].v.obj);
+        for (i = 1; i <= user_list.length(); i++)
+            dbio_write_objid(user_list[i].v.obj);
 
         oklog("%s: Writing values pending finalization ...\n", reason);
         write_values_pending_finalization();

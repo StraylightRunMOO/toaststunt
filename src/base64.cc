@@ -55,7 +55,7 @@ static const unsigned char url_safe_base64_chars[] =
 static package
 bf_encode_base64(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    const int safe = arglist.v.list[0].v.num > 1 && is_true(arglist.v.list[2]);
+    const int safe = arglist.length() > 1 && is_true(arglist[2]);
     const unsigned char *chars = safe ? url_safe_base64_chars : base64_chars;
 
     /* check input */
@@ -63,10 +63,10 @@ bf_encode_base64(Var arglist, Byte next, void *vdata, Objid progr)
     int len;
     const char *in;
 
-    in = binary_to_raw_bytes(arglist.v.list[1].v.str, &len);
+    in = binary_to_raw_bytes(arglist[1].v.str, &len);
 
     if (!in) {
-        const package pack = make_raise_pack(E_INVARG, "Invalid binary string", var_ref(arglist.v.list[1]));
+        const package pack = make_raise_pack(E_INVARG, "Invalid binary string", var_ref(arglist[1]));
         free_var(arglist);
         return pack;
     }
@@ -158,7 +158,7 @@ static const unsigned char url_safe_base64_table[] = {
 static package
 bf_decode_base64(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    const int safe = arglist.v.list[0].v.num > 1 && is_true(arglist.v.list[2]);
+    const int safe = arglist.length() > 1 && is_true(arglist[2]);
     const unsigned char *table = safe ? url_safe_base64_table : base64_table;
 
     /* check input */
@@ -166,7 +166,7 @@ bf_decode_base64(Var arglist, Byte next, void *vdata, Objid progr)
     unsigned int len;
     const char *in;
 
-    in = arglist.v.list[1].v.str;
+    in = arglist[1].v.str;
     len = memo_strlen(in);
 
     int i, pad = 0;
@@ -174,12 +174,12 @@ bf_decode_base64(Var arglist, Byte next, void *vdata, Objid progr)
     for (i = 0; i < len; i++) {
         const unsigned char tmp = (unsigned char)in[i];
         if (table[tmp] == 80) {
-            const package pack = make_raise_pack(E_INVARG, "Invalid character in encoded data", var_ref(arglist.v.list[1]));
+            const package pack = make_raise_pack(E_INVARG, "Invalid character in encoded data", var_ref(arglist[1]));
             free_var(arglist);
             return pack;
         }
         if (pad && tmp != '=') {
-            const package pack = make_raise_pack(E_INVARG, "Pad character in encoded data", var_ref(arglist.v.list[1]));
+            const package pack = make_raise_pack(E_INVARG, "Pad character in encoded data", var_ref(arglist[1]));
             free_var(arglist);
             return pack;
         }
@@ -188,12 +188,12 @@ bf_decode_base64(Var arglist, Byte next, void *vdata, Objid progr)
     }
 
     if (pad > 2) {
-        const package pack = make_raise_pack(E_INVARG, "Too many pad characters", var_ref(arglist.v.list[1]));
+        const package pack = make_raise_pack(E_INVARG, "Too many pad characters", var_ref(arglist[1]));
         free_var(arglist);
         return pack;
     }
     if ((len - pad == 1) || (!safe && len % 4)) {
-        const package pack = make_raise_pack(E_INVARG, "Invalid length", var_ref(arglist.v.list[1]));
+        const package pack = make_raise_pack(E_INVARG, "Invalid length", var_ref(arglist[1]));
         free_var(arglist);
         return pack;
     }

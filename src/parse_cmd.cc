@@ -116,8 +116,8 @@ parse_into_wordlist(const char *command)
     argv = parse_into_words(s, &argc);
     args = new_list(argc);
     for (i = 1; i <= argc; i++) {
-        args.v.list[i].type = TYPE_STR;
-        args.v.list[i].v.str = str_dup(argv[i - 1]);
+        args[i].type = TYPE_STR;
+        args[i].v.str = str_dup(argv[i - 1]);
     }
     free_str(s);
     return args;
@@ -187,8 +187,8 @@ finish_specials:
 
     pc.args = new_list(argc - 1);
     for (i = 1; i < argc; i++) {
-        pc.args.v.list[i].type = TYPE_STR;
-        pc.args.v.list[i].v.str = str_dup(argv[i]);
+        pc.args[i].type = TYPE_STR;
+        pc.args[i].v.str = str_dup(argv[i]);
     }
 
     /*

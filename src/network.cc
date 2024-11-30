@@ -1002,14 +1002,14 @@ open_connection(Var arglist, int *read_fd, int *write_fd,
     if (!outbound_network_enabled)
         return make_raise_pack(E_PERM, "Outbound network connections are disabled.", zero);
 
-    if (arglist.v.list[0].v.num < 2)
+    if (arglist.length() < 2)
         return make_error_pack(E_ARGS);
-    else if (arglist.v.list[1].type != TYPE_STR ||
-             arglist.v.list[2].type != TYPE_INT)
+    else if (arglist[1].type != TYPE_STR ||
+             arglist[2].type != TYPE_INT)
         return make_error_pack(E_TYPE);
 
-    const char *host_name = arglist.v.list[1].v.str;
-    int host_port = arglist.v.list[2].v.num;
+    const char *host_name = arglist[1].v.str;
+    int host_port = arglist[2].v.num;
 
     memset(&hint, 0, sizeof hint);
     hint.ai_family = use_ipv6 ? AF_INET6 : AF_INET;
@@ -1765,7 +1765,8 @@ network_open_connection(Var arglist, server_listener sl, bool use_ipv6 USE_TLS_B
 #endif
 
     e = open_connection(arglist, &rfd, &wfd, &name, &ip_addr, &port, &protocol, use_ipv6 USE_TLS_BOOL SSL_CONTEXT_2_ARG);
-    if (e.u.raise.code.v.err == E_NONE) {
+
+    if(std::get<raise_t>(e.u).code.v.err == E_NONE) {
         h = make_new_connection(sl, rfd, wfd, 1, 0, nullptr, nullptr, port, name, ip_addr, protocol SSL_CONTEXT_1_ARG);
 #ifdef USE_TLS
         h->connected = true;

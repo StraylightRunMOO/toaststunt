@@ -206,10 +206,11 @@ call_bi_func(unsigned n, Var arglist, Byte func_pc,
     struct bft_entry *f;
 
     if (n >= top_bf_table) {
-	errlog("CALL_BI_FUNC: Unknown function number: %d\n", n);
-	free_var(arglist);
-	return no_var_pack();
+	   errlog("CALL_BI_FUNC: Unknown function number: %d\n", n);
+	   free_var(arglist);
+	   return no_var_pack();
     }
+
     f = bf_table + n;
 
     static Stream *error_msg = nullptr;
@@ -343,8 +344,8 @@ make_abort_pack(enum abort_reason reason)
     package p;
 
     p.kind = package::BI_KILL;
-    p.u.ret.type = TYPE_INT;
-    p.u.ret.v.num = reason;
+    p.u = Var::new_int(reason);
+
     return p;
 }
 
@@ -360,10 +361,7 @@ make_raise_pack(enum error err, const char *msg, Var value)
     package p;
 
     p.kind = package::BI_RAISE;
-    p.u.raise.code.type = TYPE_ERR;
-    p.u.raise.code.v.err = err;
-    p.u.raise.msg = str_dup(msg);
-    p.u.raise.value = value;
+    p.u = raise_t{.code = Var::new_err(err), .value = value, .msg = str_dup(msg)};
 
     return p;
 }
@@ -378,8 +376,8 @@ make_x_not_found_pack(enum error err, const char *msg, Objid the_object)
     asprintf(&error_msg, "%s: #%" PRIdN ":%s()", unparse_error(err), the_object, msg);
 
     Var value = new_list(2);
-    value.v.list[1] = Var::new_obj(the_object);
-    value.v.list[2] = missing;
+    value[1] = Var::new_obj(the_object);
+    value[2] = missing;
 
     package p = make_raise_pack(err, error_msg, value);
 
@@ -394,7 +392,7 @@ make_var_pack(Var v)
     package p;
 
     p.kind = package::BI_RETURN;
-    p.u.ret = v;
+    p.u = v;
 
     return p;
 }
@@ -411,8 +409,8 @@ make_call_pack(Byte pc, void *data)
     package p;
 
     p.kind = package::BI_CALL;
-    p.u.call.pc = pc;
-    p.u.call.data = data;
+    package_t call_data = call_t{.pc = pc, .data = data};
+    p.u = call_data;
 
     return p;
 }
@@ -429,8 +427,7 @@ make_suspend_pack(enum error(*proc) (vm, void *), void *data)
     package p;
 
     p.kind = package::BI_SUSPEND;
-    p.u.susp.proc = proc;
-    p.u.susp.data = data;
+    p.u = susp_t{.proc = proc, .data = data};
 
     return p;
 }
@@ -441,8 +438,7 @@ make_int_pack(Num v)
     package p;
 
     p.kind = package::BI_RETURN;
-    p.u.ret.type = TYPE_INT;
-    p.u.ret.v.num = v;
+    p.u = Var::new_int(v);
 
     return p;
 }
@@ -453,8 +449,7 @@ make_float_pack(double v)
     package p;
 
     p.kind = package::BI_RETURN;
-    p.u.ret.type = TYPE_FLOAT;
-    p.u.ret.v.fnum = v;
+    p.u = Var::new_float(v);
 
     return p;
 }
@@ -469,18 +464,18 @@ function_description(int i)
 
     entry = bf_table[i];
     v = new_list(4);
-    v.v.list[1].type = TYPE_STR;
-    v.v.list[1].v.str = str_ref(entry.name);
-    v.v.list[2].type = TYPE_INT;
-    v.v.list[2].v.num = entry.minargs;
-    v.v.list[3].type = TYPE_INT;
-    v.v.list[3].v.num = entry.maxargs;
+    v[1].type = TYPE_STR;
+    v[1].v.str = str_ref(entry.name);
+    v[2].type = TYPE_INT;
+    v[2].v.num = entry.minargs;
+    v[3].type = TYPE_INT;
+    v[3].v.num = entry.maxargs;
     nargs = entry.maxargs == -1 ? entry.minargs : entry.maxargs;
-    vv = v.v.list[4] = new_list(nargs);
+    vv = v[4] = new_list(nargs);
     for (j = 0; j < nargs; j++) {
         int proto = entry.prototype[j];
-        vv.v.list[j + 1].type = TYPE_INT;
-        vv.v.list[j + 1].v.num = proto < 0 ? proto : (proto & TYPE_DB_MASK);
+        vv[j + 1].type = TYPE_INT;
+        vv[j + 1].v.num = proto < 0 ? proto : (proto & TYPE_DB_MASK);
     }
 
     return v;
@@ -492,8 +487,8 @@ bf_function_info(Var arglist, Byte next, void *vdata, Objid progr)
     Var r;
     unsigned int i;
 
-    if (arglist.v.list[0].v.num == 1) {
-	i = number_func_by_name(arglist.v.list[1].v.str);
+    if (arglist.length() == 1) {
+	i = number_func_by_name(arglist[1].v.str);
 	if (i == FUNC_NOT_FOUND) {
 	    free_var(arglist);
 	    return make_error_pack(E_INVARG);
@@ -502,7 +497,7 @@ bf_function_info(Var arglist, Byte next, void *vdata, Objid progr)
     } else {
 	r = new_list(top_bf_table);
 	for (i = 0; i < top_bf_table; i++)
-	    r.v.list[i + 1] = function_description(i);
+	    r[i + 1] = function_description(i);
     }
 
     free_var(arglist);

@@ -386,8 +386,8 @@ handle_user_defined_signal(int sig)
     Var args, result;
 
     args = new_list(1);
-    args.v.list[1].type = TYPE_STR;
-    args.v.list[1].v.str = str_dup(sig == SIGUSR1 ? "SIGUSR1" : "SIGUSR2");
+    args[1].type = TYPE_STR;
+    args[1].v.str = str_dup(sig == SIGUSR1 ? "SIGUSR1" : "SIGUSR2");
 
     if (run_server_task(-1, Var::new_obj(SYSTEM_OBJECT), "handle_signal", args, "", &result) != OUTCOME_DONE || is_true(result)) {
         /* :handle_signal returned true; do nothing. */
@@ -406,8 +406,8 @@ call_checkpoint_notifier(int successful)
     Var args;
 
     args = new_list(1);
-    args.v.list[1].type = TYPE_INT;
-    args.v.list[1].v.num = successful;
+    args[1].type = TYPE_INT;
+    args[1].v.num = successful;
     run_server_task(-1, Var::new_obj(SYSTEM_OBJECT), "checkpoint_finished", args, "", nullptr);
 }
 
@@ -521,8 +521,14 @@ call_notifier(Objid player, Objid handler, const char *verb_name)
     Var args;
 
     args = new_list(1);
-    args.v.list[1].type = TYPE_OBJ;
-    args.v.list[1].v.obj = player;
+    args[1].type = TYPE_OBJ;
+    args[1].v.obj = player;
+
+    #ifdef MEMO_SIZE
+        var_metadata *metadata = ((var_metadata*)args.v.list) - 1;
+        metadata->size = 0; //metadata_old->size;
+    #endif
+
     run_server_task(player, Var::new_obj(handler), verb_name, args, "", nullptr);
 }
 
@@ -555,9 +561,9 @@ send_message(Objid listener, network_handle nh, const char *msg_name, ...)
         else if (msg.type == TYPE_LIST) {
             int i;
 
-            for (i = 1; i <= msg.v.list[0].v.num; i++)
-                if (msg.v.list[i].type == TYPE_STR)
-                    network_send_line(nh, msg.v.list[i].v.str, 1, 1);
+            for (i = 1; i <= msg.length(); i++)
+                if (msg[i].type == TYPE_STR)
+                    network_send_line(nh, msg[i].v.str, 1, 1);
         }
     } else          /* Use default message */
         while ((line = va_arg(args, const char *)) != 0)
@@ -745,7 +751,7 @@ read_values_pending_finalization(void)
     pending_list = new_list(count);
 
     for (i = 1; i <= count; i++) {
-        pending_list.v.list[i] = dbio_read_var();
+        pending_list[i] = dbio_read_var();
     }
 
     return 1;
@@ -757,10 +763,10 @@ main_loop(void)
     int i;
 
     /* First, queue anonymous objects and WAIFs */
-    for (i = 1; i <= pending_list.v.list[0].v.num; i++) {
+    for (i = 1; i <= pending_list.length(); i++) {
         Var v;
 
-        v = pending_list.v.list[i];
+        v = pending_list[i];
 
         /* in theory this could be any value... */
         /* in practice this will be an anonymous object... */
@@ -781,11 +787,11 @@ main_loop(void)
     free_var(pending_list);
 
     /* Second, notify DB of disconnections for all checkpointed connections */
-    for (i = 1; i <= checkpointed_connections.v.list[0].v.num; i++) {
+    for (i = 1; i <= checkpointed_connections.length(); i++) {
         Var v;
 
-        v = checkpointed_connections.v.list[i];
-        call_notifier(v.v.list[1].v.obj, v.v.list[2].v.obj,
+        v = checkpointed_connections[i];
+        call_notifier(v[1].v.obj, v[2].v.obj,
                       "user_disconnected");
     }
     free_var(checkpointed_connections);
@@ -1135,22 +1141,22 @@ emergency_mode()
                 int i;
 
                 printf("** %" PRIdN " errors during parsing:\n",
-                       errors.v.list[0].v.num);
-                for (i = 1; i <= errors.v.list[0].v.num; i++)
-                    printf("  %s\n", errors.v.list[i].v.str);
+                       errors.length());
+                for (i = 1; i <= errors.length(); i++)
+                    printf("  %s\n", errors[i].v.str);
             }
             free_var(errors);
         } else {
             words = parse_into_wordlist(line);
-            nargs = words.v.list[0].v.num - 1;
+            nargs = words.length() - 1;
             if (nargs < 0)
                 continue;
-            command = words.v.list[1].v.str;
+            command = words[1].v.str;
 
             if ((!strcasecmp(command, "program")
                     || !strcasecmp(command, ".program"))
                     && nargs == 1) {
-                const char *verbref = words.v.list[2].v.str;
+                const char *verbref = words[2].v.str;
                 db_verb_handle h;
                 const char *message, *vname;
 
@@ -1178,9 +1184,9 @@ emergency_mode()
                         int i;
 
                         printf("** %" PRIdN " errors during parsing:\n",
-                               errors.v.list[0].v.num);
-                        for (i = 1; i <= errors.v.list[0].v.num; i++)
-                            printf("  %s\n", errors.v.list[i].v.str);
+                               errors.length());
+                        for (i = 1; i <= errors.length(); i++)
+                            printf("  %s\n", errors[i].v.str);
                         printf("Verb not programmed.\n");
                     }
 
@@ -1188,7 +1194,7 @@ emergency_mode()
                     free_var(errors);
                 }
             } else if (!strcasecmp(command, "list") && nargs == 1) {
-                const char *verbref = words.v.list[2].v.str;
+                const char *verbref = words[2].v.str;
                 db_verb_handle h;
                 const char *message, *vname;
 
@@ -1200,7 +1206,7 @@ emergency_mode()
                 else
                     printf("%s\n", message);
             } else if (!strcasecmp(command, "disassemble") && nargs == 1) {
-                const char *verbref = words.v.list[2].v.str;
+                const char *verbref = words[2].v.str;
                 db_verb_handle h;
                 const char *message, *vname;
 
@@ -1220,7 +1226,7 @@ emergency_mode()
             } else if (!strcasecmp(command, "debug") && nargs == 0) {
                 debug = !debug;
             } else if (!strcasecmp(command, "wizard") && nargs == 1
-                       && sscanf(words.v.list[2].v.str, "#%" PRIdN, &wizard) == 1) {
+                       && sscanf(words[2].v.str, "#%" PRIdN, &wizard) == 1) {
                 printf("** Switching to wizard #%" PRIdN "...\n", wizard);
             } else if (!strcasecmp(command, "help") || !strcasecmp(command, "?")) {
                 printf(";EXPR                 "
@@ -1588,8 +1594,8 @@ is_trusted_proxy(Objid connection)
         int i;
         const char *ip = network_ip_address(existing_h->nhandle);
 
-        for (i = 1; i <= proxies.v.list[0].v.num; i++) {
-            if (proxies.v.list[i].type == TYPE_STR && strcmp(ip, proxies.v.list[i].v.str) == 0) {
+        for (i = 1; i <= proxies.length(); i++) {
+            if (proxies[i].type == TYPE_STR && strcmp(ip, proxies[i].v.str) == 0) {
                 return true;
             }
         }
@@ -1846,10 +1852,10 @@ read_active_connections(void)
             who = dbio_read_num();
             listener = SYSTEM_OBJECT;
         }
-        checkpointed_connections.v.list[i] = v = new_list(2);
-        v.v.list[1].type = v.v.list[2].type = TYPE_OBJ;
-        v.v.list[1].v.obj = who;
-        v.v.list[2].v.obj = listener;
+        checkpointed_connections[i] = v = new_list(2);
+        v[1].type = v[2].type = TYPE_OBJ;
+        v[1].v.obj = who;
+        v[2].v.obj = listener;
     }
 
     return 1;
@@ -2368,8 +2374,8 @@ static package
 bf_server_version(Var arglist, Byte next, void *vdata, Objid progr)
 {
     Var r;
-    if (arglist.v.list[0].v.num > 0) {
-        r = server_version_full(arglist.v.list[1]);
+    if (arglist.length() > 0) {
+        r = server_version_full(arglist[1]);
     }
     else {
         r.type = TYPE_STR;
@@ -2386,7 +2392,7 @@ static package
 bf_renumber(Var arglist, Byte next, void *vdata, Objid progr)
 {
     Var r;
-    Objid o = arglist.v.list[1].v.obj;
+    Objid o = arglist[1].v.obj;
     free_var(arglist);
 
     if (!valid(o))
@@ -2446,16 +2452,16 @@ bf_memory_usage(Var arglist, Byte next, void *vdata, Objid progr)
 #endif
 
     Var s = new_list(5);
-    s.v.list[1].type = TYPE_FLOAT;
-    s.v.list[2].type = TYPE_FLOAT;
-    s.v.list[3].type = TYPE_FLOAT;
-    s.v.list[4].type = TYPE_FLOAT;
-    s.v.list[5].type = TYPE_FLOAT;
-    s.v.list[1].v.fnum = size;           // Total program size
-    s.v.list[2].v.fnum = resident;       // Resident set size
-    s.v.list[3].v.fnum = share;          // Shared pages from shared mappings
-    s.v.list[4].v.fnum = text;           // Text (code)
-    s.v.list[5].v.fnum = data;           // Data + stack
+    s[1].type = TYPE_FLOAT;
+    s[2].type = TYPE_FLOAT;
+    s[3].type = TYPE_FLOAT;
+    s[4].type = TYPE_FLOAT;
+    s[5].type = TYPE_FLOAT;
+    s[1].v.fnum = size;           // Total program size
+    s[2].v.fnum = resident;       // Resident set size
+    s[3].v.fnum = share;          // Shared pages from shared mappings
+    s[4].v.fnum = text;           // Text (code)
+    s[5].v.fnum = data;           // Data + stack
 
     return make_var_pack(s);
 }
@@ -2502,13 +2508,13 @@ bf_malloc_stats(Var arglist, Byte next, void *vdata, Objid progr)
         active_large = 0;
 
     Var s = new_list(7);
-    s.v.list[1] = Var::new_int(allocated);
-    s.v.list[2] = Var::new_int(active);
-    s.v.list[3] = Var::new_int(resident);
-    s.v.list[4] = Var::new_int(metadata);
-    s.v.list[5] = Var::new_int(mapped);
-    s.v.list[6] = Var::new_int(allocated_large);
-    s.v.list[7] = Var::new_int(active_large);
+    s[1] = Var::new_int(allocated);
+    s[2] = Var::new_int(active);
+    s[3] = Var::new_int(resident);
+    s[4] = Var::new_int(metadata);
+    s[5] = Var::new_int(mapped);
+    s[6] = Var::new_int(allocated_large);
+    s[7] = Var::new_int(active_large);
 
     return make_var_pack(s);
 }
@@ -2530,18 +2536,18 @@ bf_usage(Var arglist, Byte next, void *vdata, Objid progr)
 
     // Setup all of our types ahead of time.
     int x = 0;
-    for (x = 3; x <= r.v.list[0].v.num; x++)
-        r.v.list[x].type = TYPE_INT;
+    for (x = 3; x <= r.length(); x++)
+        r[x].type = TYPE_INT;
 
     for (x = 1; x <= 3; x++)
-        cpu.v.list[x] = Var::new_int(0); //initialize to all 0
+        cpu[x] = Var::new_int(0); //initialize to all 0
 
 #if !defined(__FreeBSD__) && !defined(__MACH__)
     struct sysinfo sys_info;
     int info_ret = sysinfo(&sys_info);
 
     for (x = 0; x < 3; x++)
-        cpu.v.list[x + 1].v.num = (info_ret != 0 ? 0 : sys_info.loads[x]);
+        cpu[x + 1].v.num = (info_ret != 0 ? 0 : sys_info.loads[x]);
 #else
     /*** Begin CPU load averages ***/
 #ifdef __MACH__
@@ -2549,7 +2555,7 @@ bf_usage(Var arglist, Byte next, void *vdata, Objid progr)
     size_t size = sizeof(load);
     if (sysctlbyname("vm.loadavg", &load, &size, 0, 0) != -1) {
         for (x = 0; x < 3; x++)
-            cpu.v.list[x + 1].v.num = load.ldavg[x];
+            cpu[x + 1].v.num = load.ldavg[x];
     }
 #endif
 #endif
@@ -2558,17 +2564,17 @@ bf_usage(Var arglist, Byte next, void *vdata, Objid progr)
     struct rusage usage;
     getrusage(RUSAGE_SELF, &usage);
 
-    r.v.list[1].type = TYPE_FLOAT;
-    r.v.list[2].type = TYPE_FLOAT;
-    r.v.list[1].v.fnum = (double)usage.ru_utime.tv_sec + (double)usage.ru_utime.tv_usec / CLOCKS_PER_SEC;
-    r.v.list[2].v.fnum = (double)usage.ru_stime.tv_sec + (double)usage.ru_stime.tv_usec / CLOCKS_PER_SEC;
-    r.v.list[3].v.num = usage.ru_minflt;
-    r.v.list[4].v.num = usage.ru_majflt;
-    r.v.list[5].v.num = usage.ru_inblock;
-    r.v.list[6].v.num = usage.ru_oublock;
-    r.v.list[7].v.num = usage.ru_nvcsw;
-    r.v.list[8].v.num = usage.ru_nivcsw;
-    r.v.list[9].v.num = usage.ru_nsignals;
+    r[1].type = TYPE_FLOAT;
+    r[2].type = TYPE_FLOAT;
+    r[1].v.fnum = (double)usage.ru_utime.tv_sec + (double)usage.ru_utime.tv_usec / CLOCKS_PER_SEC;
+    r[2].v.fnum = (double)usage.ru_stime.tv_sec + (double)usage.ru_stime.tv_usec / CLOCKS_PER_SEC;
+    r[3].v.num = usage.ru_minflt;
+    r[4].v.num = usage.ru_majflt;
+    r[5].v.num = usage.ru_inblock;
+    r[6].v.num = usage.ru_oublock;
+    r[7].v.num = usage.ru_nvcsw;
+    r[8].v.num = usage.ru_nivcsw;
+    r[9].v.num = usage.ru_nsignals;
 
     // Add in our load averages.
     r = listinsert(r, cpu, 1);
@@ -2586,8 +2592,8 @@ bf_panic(Var arglist, Byte next, void *vdata, Objid progr)
         return make_error_pack(E_PERM);
     }
 
-    if (arglist.v.list[0].v.num) {
-        msg = str_dup(arglist.v.list[1].v.str);
+    if (arglist.length()) {
+        msg = str_dup(arglist[1].v.str);
     } else {
         msg = "";
     }
@@ -2602,8 +2608,8 @@ bf_panic(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_shutdown(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    int nargs = arglist.v.list[0].v.num;
-    const char *message = (nargs >= 1 ? arglist.v.list[1].v.str : nullptr);
+    int nargs = arglist.length();
+    const char *message = (nargs >= 1 ? arglist[1].v.str : nullptr);
 
     if (!is_wizard(progr)) {
         free_var(arglist);
@@ -2689,8 +2695,8 @@ bf_open_network_connection(Var arglist, Byte next, void *vdata, Objid progr)
 
     sl.ptr = nullptr;
 
-    if (arglist.v.list[0].v.num >= 3) {
-        Var options = arglist.v.list[3];
+    if (arglist.length() >= 3) {
+        Var options = arglist[3];
         Var value;
 
 #ifdef USE_TLS
@@ -2731,7 +2737,7 @@ bf_open_network_connection(Var arglist, Byte next, void *vdata, Objid progr)
 
     e = network_open_connection(arglist, sl, use_ipv6 USE_TLS_BOOL);
     free_var(arglist);
-    if (e.u.raise.code.v.err == E_NONE) {
+    if (std::get<raise_t>(e.u).code.v.err == E_NONE) {
         /* The connection was successfully opened, implying that
          * server_new_connection was called, implying and a new negative
          * player number was allocated for the connection.  Thus, the old
@@ -2758,8 +2764,8 @@ static package
 bf_connected_players(Var arglist, Byte next, void *vdata, Objid progr)
 {
     shandle *h;
-    int nargs = arglist.v.list[0].v.num;
-    int show_all = (nargs >= 1 && is_true(arglist.v.list[1]));
+    int nargs = arglist.length();
+    int show_all = (nargs >= 1 && is_true(arglist[1]));
     int count = 0;
     Var result;
 
@@ -2776,8 +2782,8 @@ bf_connected_players(Var arglist, Byte next, void *vdata, Objid progr)
     for (h = all_shandles; h; h = h->next) {
         if ((show_all || h->connection_time != 0) && !h->disconnect_me.load()) {
             count++;
-            result.v.list[count].type = TYPE_OBJ;
-            result.v.list[count].v.obj = h->player;
+            result[count].type = TYPE_OBJ;
+            result[count].v.obj = h->player;
         }
     }
     all_shandles_mutex.unlock();
@@ -2789,7 +2795,7 @@ static package
 bf_connected_seconds(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (player) */
     Var r;
-    shandle *h = find_shandle(arglist.v.list[1].v.obj);
+    shandle *h = find_shandle(arglist[1].v.obj);
 
     r.type = TYPE_INT;
     if (h && h->connection_time != 0 && !h->disconnect_me.load())
@@ -2807,7 +2813,7 @@ static package
 bf_idle_seconds(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (player) */
     Var r;
-    shandle *h = find_shandle(arglist.v.list[1].v.obj);
+    shandle *h = find_shandle(arglist[1].v.obj);
 
     r.type = TYPE_INT;
     if (h && !h->disconnect_me.load())
@@ -2824,7 +2830,7 @@ bf_idle_seconds(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_connection_name(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (player [, IP | LEGACY]) */
-    Objid who = arglist.v.list[1].v.obj;
+    Objid who = arglist[1].v.obj;
     shandle *h = find_shandle(who);
     Var r;
 
@@ -2833,9 +2839,9 @@ bf_connection_name(Var arglist, Byte next, void *vdata, Objid progr)
 
     if (h && !h->disconnect_me) {
         lock_connection_name_mutex(h->nhandle);
-        if (arglist.v.list[0].v.num == 1) {
+        if (arglist.length() == 1) {
             r.v.str = str_dup(network_connection_name(h->nhandle));
-        } else if (arglist.v.list[2].v.num == 1)
+        } else if (arglist[2].v.num == 1)
             r.v.str = str_dup(network_ip_address(h->nhandle));
         else {
             char *full_conn_name = full_network_connection_name(h->nhandle, true);
@@ -2867,10 +2873,10 @@ name_lookup_cleanup(void *extra_data)
 void
 name_lookup_callback(Var arglist, Var *ret, void *extra_data)
 {
-    int nargs = arglist.v.list[0].v.num;
-    Objid who = arglist.v.list[1].v.obj;
+    int nargs = arglist.length();
+    Objid who = arglist[1].v.obj;
     shandle *h = find_shandle(who);
-    bool rewrite_connect_name = nargs > 1 && is_true(arglist.v.list[2]);
+    bool rewrite_connect_name = nargs > 1 && is_true(arglist[2]);
 
     network_handle nh;
     nh.ptr = extra_data;
@@ -2898,13 +2904,13 @@ name_lookup_callback(Var arglist, Var *ret, void *extra_data)
 static package
 bf_name_lookup(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    if (!is_wizard(progr) && progr != arglist.v.list[1].v.obj)
+    if (!is_wizard(progr) && progr != arglist[1].v.obj)
         return make_error_pack(E_PERM);
 
     /* The main thread should keep track of nhandle refcounts to
        ensure that close_nhandle doesn't pull the rug out from
        under the other threads. */
-    shandle *h = find_shandle(arglist.v.list[1].v.obj);
+    shandle *h = find_shandle(arglist[1].v.obj);
 
     if (!h || h->disconnect_me) {
         free_var(arglist);
@@ -2919,13 +2925,13 @@ bf_name_lookup(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_notify(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (player, string [, no_flush]) */
-    Objid conn = arglist.v.list[1].v.obj;
-    const char *line = arglist.v.list[2].v.str;
-    int no_flush = (arglist.v.list[0].v.num > 2
-                    ? is_true(arglist.v.list[3])
+    Objid conn = arglist[1].v.obj;
+    const char *line = arglist[2].v.str;
+    int no_flush = (arglist.length() > 2
+                    ? is_true(arglist[3])
                     : 0);
-    int no_newline = (arglist.v.list[0].v.num > 3
-                      ? is_true(arglist.v.list[4]) : 0);
+    int no_newline = (arglist.length() > 3
+                      ? is_true(arglist[4]) : 0);
 
     shandle *h = find_shandle(conn);
     Var r;
@@ -2959,7 +2965,7 @@ bf_notify(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_boot_player(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (object) */
-    Objid oid = arglist.v.list[1].v.obj;
+    Objid oid = arglist[1].v.obj;
 
     free_var(arglist);
 
@@ -2973,9 +2979,9 @@ bf_boot_player(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_set_connection_option(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (conn, option, value) */
-    Objid oid = arglist.v.list[1].v.obj;
-    const char *option = arglist.v.list[2].v.str;
-    Var value = arglist.v.list[3];
+    Objid oid = arglist[1].v.obj;
+    const char *option = arglist[2].v.str;
+    Var value = arglist[3];
     shandle *h = find_shandle(oid);
     enum error e = E_NONE;
 
@@ -2997,9 +3003,9 @@ bf_set_connection_option(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_connection_options(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (conn [, opt-name]) */
-    Objid oid = arglist.v.list[1].v.obj;
-    int nargs = arglist.v.list[0].v.num;
-    const char *oname = (nargs >= 2 ? arglist.v.list[2].v.str : nullptr);
+    Objid oid = arglist[1].v.obj;
+    int nargs = arglist.length();
+    const char *oname = (nargs >= 2 ? arglist[2].v.str : nullptr);
     shandle *h = find_shandle(oid);
     Var ans;
 
@@ -3031,7 +3037,7 @@ bf_connection_options(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_connection_info(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (conn) */
-    Objid oid = arglist.v.list[1].v.obj;
+    Objid oid = arglist[1].v.obj;
     shandle *h = find_shandle(oid);
 
     if (!h || h->disconnect_me.load()) {
@@ -3089,8 +3095,8 @@ find_slistener(Var desc, bool use_ipv6)
 static package
 bf_listen(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (oid, desc) */
-    Objid oid = arglist.v.list[1].v.obj;
-    Var desc = arglist.v.list[2];
+    Objid oid = arglist[1].v.obj;
+    Var desc = arglist[2];
     int print_messages = 0;
     bool ipv6 = false;
     enum error e = E_NONE;
@@ -3111,8 +3117,8 @@ bf_listen(Var arglist, Byte next, void *vdata, Objid progr)
     static Var tls_key_key = str_dup_to_var("key");
 #endif
 
-    if (arglist.v.list[0].v.num >= 3) {
-        Var options = arglist.v.list[3];
+    if (arglist.length() >= 3) {
+        Var options = arglist[3];
         Var value;
 
 #ifdef USE_TLS
@@ -3188,8 +3194,8 @@ bf_listen(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_unlisten(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (desc) */
-    Var desc = arglist.v.list[1];
-    bool ipv6 = arglist.v.list[0].v.num >= 2 && is_true(arglist.v.list[2]);
+    Var desc = arglist[1];
+    bool ipv6 = arglist.length() >= 2 && is_true(arglist[2]);
     enum error e = E_NONE;
     slistener *l = nullptr;
 
@@ -3209,10 +3215,10 @@ bf_unlisten(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_listeners(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (find) */
-    const int nargs = arglist.v.list[0].v.num;
+    const int nargs = arglist.length();
     Var entry, list = new_list(0);
     bool find_listener = nargs == 1 ? true : false;
-    const Var find = find_listener ? arglist.v.list[1] : var_ref(zero);
+    const Var find = find_listener ? arglist[1] : var_ref(zero);
     slistener *l;
 
 // Save the keys for later
@@ -3242,8 +3248,8 @@ bf_listeners(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_buffered_output_length(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* ([connection]) */
-    int nargs = arglist.v.list[0].v.num;
-    Objid conn = nargs >= 1 ? arglist.v.list[1].v.obj : 0;
+    int nargs = arglist.length();
+    Objid conn = nargs >= 1 ? arglist[1].v.obj : 0;
     Var r;
 
     free_var(arglist);

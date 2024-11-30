@@ -23,6 +23,19 @@
 
 #include "options.h"
 
+#define IS_POWER_OF_TWO(v) (v & -v) == v
+
+inline int next_power_of_two(unsigned int v) { // compute the next highest power of 2 of 32-bit v
+    v--;
+    v |= v >> 1;
+    v |= v >> 2;
+    v |= v >> 4;
+    v |= v >> 8;
+    v |= v >> 16;
+    v++;
+    return static_cast<int>(v);
+}
+
 #ifdef ENABLE_GC
 /* See "Concurrent Cycle Collection in Reference Counted Systems",
  * (Bacon and Rajan, 2001) for a description of the cycle collection
@@ -50,21 +63,21 @@ typedef struct var_metadata {
 #endif
 } var_metadata;
 
-static inline uint32_t
+static inline uint16_t
 addref(const void *ptr)
 {
     var_metadata *metadata = ((var_metadata*)ptr) - 1;
     return ++(metadata->refcount);
 }
 
-static inline uint32_t
+static inline uint16_t
 delref(const void *ptr)
 {
     var_metadata *metadata = ((var_metadata*)ptr) - 1;
     return --(metadata->refcount);
 }
 
-static inline uint32_t
+static inline uint16_t
 refcount(const void *ptr)
 {
     var_metadata *metadata = ((var_metadata*)ptr) - 1;
@@ -136,13 +149,14 @@ extern const char *str_ref(const char *);
 
 extern void myfree(void *where, Memory_Type type);
 extern void *mymalloc(unsigned size, Memory_Type type);
+extern void *mycalloc(unsigned count, unsigned size, Memory_Type type);
 extern void *myrealloc(void *where, unsigned size, Memory_Type type);
 
-static inline void		/* XXX was extern, fix for non-gcc compilers */
+static inline void      /* XXX was extern, fix for non-gcc compilers */
 free_str(const char *s)
 {
     if (delref(s) == 0)
-	myfree((void *) s, M_STRING);
+    myfree((void *) s, M_STRING);
 }
 
 #ifdef MEMO_SIZE
@@ -150,10 +164,10 @@ free_str(const char *s)
  * Using the same mechanism as ref_count.h uses to hide Value ref counts,
  * keep a memozied strlen in the storage with the string.
  */
-#define memo_strlen(X)		((void)0, (((var_metadata *)(X))[-1].size))
+#define memo_strlen(X)      ((void)0, (((var_metadata *)(X))[-1].size))
 #else
-#define memo_strlen(X)		strlen(X)
+#define memo_strlen(X)      strlen(X)
 
 #endif /* MEMO_STRLEN */
 
-#endif				/* Storage_h */
+#endif              /* Storage_h */

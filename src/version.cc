@@ -107,7 +107,7 @@ static void init_version_structure()
 
 #define BEGIN_GROUP(name)                        \
     BEGIN_LIST(1);                               \
-    SET_STR(the_list[0].v.list[1],#name);        \
+    SET_STR(the_list[0][1],#name);        \
     BEGIN_LIST(0)
 
 #define END_GROUP()   END_LIST(); END_LIST()
@@ -120,14 +120,14 @@ static void init_version_structure()
 
 #define PUSH_PAIR(name,WHAT,value)                \
     item = new_list(2);                           \
-    SET_STR(item.v.list[1],name);                 \
-    SET_##WHAT(item.v.list[2],value);             \
+    SET_STR(item[1],name);                 \
+    SET_##WHAT(item[2],value);             \
     the_list[0] = listappend(the_list[0], item);
 
     /* create non-string/int true and false values */
     Var falsev;
     Var truev = new_list(1);
-    SET_INT(truev.v.list[1], 0);
+    SET_INT(truev[1], 0);
     SET_OBJ(falsev, -1);
 
     the_list[0] = new_list(0);
@@ -211,12 +211,12 @@ server_version_full(Var arg)
                         goto found;
                     break;
                 case TYPE_LIST:
-                    if (tree[0].v.list[0].v.num == 2 &&
-                            tree[0].v.list[1].type == TYPE_STR &&
-                            memo_strlen(tree[0].v.list[1].v.str) == e - s &&
-                            strncmp(tree[0].v.list[1].v.str, s, e - s) == 0) {
+                    if (tree[0].length() == 2 &&
+                            tree[0][1].type == TYPE_STR &&
+                            memo_strlen(tree[0][1].v.str) == e - s &&
+                            strncmp(tree[0][1].v.str, s, e - s) == 0) {
 
-                        if (tree[0].v.list[0].v.num > 1)
+                        if (tree[0].length() > 1)
                             tree = tree[0].v.list + 2;
                         else
                             tree = tree[0].v.list + 1;

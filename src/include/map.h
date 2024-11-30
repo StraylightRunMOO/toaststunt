@@ -18,6 +18,8 @@ extern Var map_dup(Var map);
 extern Var mapinsert(Var map, Var key, Var value);
 extern const map_entry *maplookup(Var map, Var key, Var *value, int case_matters);
 extern const map_entry *mapstrlookup(Var map, const char *key, Var *value, int case_matters);
+extern Var& mapat(Var map, Var key);
+
 extern int mapseek(Var map, Var key, Var *iter, int case_matters);
 extern int mapequal(Var lhs, Var rhs, int case_matters);
 extern Num maplength(Var map);
@@ -31,6 +33,7 @@ extern int maplast(Var map, Var *value);
 
 extern Var maprange(Var map, int from, int to);
 extern enum error maprangeset(Var map, int from, int to, Var value, Var *_new);
+extern bool maphaskey(Var map, Var key);
 extern int mapkeyindex(Var map, Var key);
 
 typedef std::function<int(Var, Var, int)> map_callback;

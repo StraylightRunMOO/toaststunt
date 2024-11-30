@@ -235,8 +235,8 @@ refers_to(Var target, Var key, bool waif_self_check)
         case TYPE_LIST:
             if (target.v.list == key.v.list)
                 return 1;
-            for (i = 1; i <= target.v.list[0].v.num; ++i)
-                if (refers_to(target.v.list[i], key, true))
+            for (i = 1; i <= target.length(); ++i)
+                if (refers_to(target[i], key, true))
                     return 1;
             return 0;
         case TYPE_WAIF:

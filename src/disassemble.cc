@@ -459,8 +459,8 @@ add_line(const char *line, void *data)
 static package
 bf_disassemble(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    Var obj = arglist.v.list[1];
-    Var desc = arglist.v.list[2];
+    Var obj = arglist[1];
+    Var desc = arglist[2];
     db_verb_handle h;
     struct data data;
     Var r;
@@ -488,8 +488,8 @@ bf_disassemble(Var arglist, Byte next, void *vdata, Objid progr)
     disassemble(db_verb_program(h), add_line, &data);
     r = new_list(data.used);
     for (i = 1; i <= data.used; i++) {
-        r.v.list[i].type = TYPE_STR;
-        r.v.list[i].v.str = data.lines[i - 1];
+        r[i].type = TYPE_STR;
+        r[i].v.str = data.lines[i - 1];
     }
     if (data.lines)
         myfree(data.lines, M_DISASSEMBLE);

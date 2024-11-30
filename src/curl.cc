@@ -41,7 +41,7 @@ CurlWriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp)
 
 static void curl_thread_callback(Var arglist, Var *ret, void *extra_data)
 {
-    int nargs = arglist.v.list[0].v.num;
+    int nargs = arglist.length();
     CURL *curl_handle;
     CURLcode res;
     CurlMemoryStruct chunk;
@@ -51,17 +51,17 @@ static void curl_thread_callback(Var arglist, Var *ret, void *extra_data)
     chunk.size = 0;
 
     if (nargs > 2)
-        timeout = arglist.v.list[3].v.num;
+        timeout = arglist[3].v.num;
 
     curl_handle = curl_easy_init();
-    curl_easy_setopt(curl_handle, CURLOPT_URL, arglist.v.list[1].v.str);
+    curl_easy_setopt(curl_handle, CURLOPT_URL, arglist[1].v.str);
     curl_easy_setopt(curl_handle, CURLOPT_PROTOCOLS_STR, "http,https,dict");
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, CurlWriteMemoryCallback);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
     curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
     curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, timeout);
 
-    if (nargs > 1 && is_true(arglist.v.list[2]))
+    if (nargs > 1 && is_true(arglist[2]))
         curl_easy_setopt(curl_handle, CURLOPT_HEADER, 1L);
 
     res = curl_easy_perform(curl_handle);
@@ -70,7 +70,7 @@ static void curl_thread_callback(Var arglist, Var *ret, void *extra_data)
         make_error_map(E_INVARG, curl_easy_strerror(res), ret);
     else {
         *ret = str_dup_to_var(raw_bytes_to_binary(chunk.result, chunk.size));
-        oklog("CURL: %lu bytes retrieved from: %s\n", (unsigned long)chunk.size, arglist.v.list[1].v.str);
+        oklog("CURL: %lu bytes retrieved from: %s\n", (unsigned long)chunk.size, arglist[1].v.str);
     }
 
     curl_easy_cleanup(curl_handle);
@@ -95,7 +95,7 @@ bf_url_encode(Var arglist, Byte next, void *vdata, Objid progr)
         return make_raise_pack(E_PERM, "Outbound network connections are disabled.", zero);
 
     Var r;
-    const char *url = arglist.v.list[1].v.str;
+    const char *url = arglist[1].v.str;
 
     char *encoded = curl_easy_escape(curl_handle, url, memo_strlen(url));
 
@@ -120,7 +120,7 @@ bf_url_decode(Var arglist, Byte next, void *vdata, Objid progr)
         return make_raise_pack(E_PERM, "Outbound network connections are disabled.", zero);
 
     Var r;
-    const char *url = arglist.v.list[1].v.str;
+    const char *url = arglist[1].v.str;
 
     char *decoded = curl_easy_unescape(curl_handle, url, memo_strlen(url), nullptr);
 

@@ -269,7 +269,7 @@ bf_threads(Var arglist, Byte next, void *vdata, Objid progr)
     int count = 0;
     Var r = new_list(background_process_table.size());
     for (auto& it : background_process_table)
-        r.v.list[++count] = Var::new_int(it.first);
+        r[++count] = Var::new_int(it.first);
 
     return make_var_pack(r);
 }
@@ -282,10 +282,10 @@ bf_threads(Var arglist, Byte next, void *vdata, Objid progr)
  */
 static package bf_thread_pool(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    const int nargs = arglist.v.list[0].v.num;
-    const char* func = arglist.v.list[1].v.str;
-    const char* pool = arglist.v.list[2].v.str;
-    const int value = (nargs > 2 ? arglist.v.list[3].v.num : 0);
+    const int nargs = arglist.length();
+    const char* func = arglist[1].v.str;
+    const char* pool = arglist[2].v.str;
+    const int value = (nargs > 2 ? arglist[3].v.num : 0);
     free_var(arglist);
 
     if (!is_wizard(progr))
@@ -316,15 +316,15 @@ static package bf_thread_pool(Var arglist, Byte next, void *vdata, Objid progr)
  * for the background_test. Receives a pointer to the relevant background_waiter struct. */
 static void background_test_callback(Var args, Var *ret, void *extra_data)
 {
-    int wait = (args.v.list[0].v.num >= 2 ? args.v.list[2].v.num : 5);
+    int wait = (args.length() >= 2 ? args[2].v.num : 5);
 
     sleep(wait);
 
     ret->type = TYPE_STR;
-    if (args.v.list[0].v.num == 0)
+    if (args.length() == 0)
         ret->v.str = str_dup("Hello, world.");
     else
-        ret->v.str = str_dup(args.v.list[1].v.str);
+        ret->v.str = str_dup(args[1].v.str);
 }
 
 /* The background testing function. Accepts a string argument and a time argument. Its goal is simply

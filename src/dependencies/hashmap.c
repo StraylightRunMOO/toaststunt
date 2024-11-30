@@ -55,6 +55,7 @@ struct hashmap {
     uint8_t loadfactor;
     uint8_t growpower;
     bool oom;
+    bool dirty;
     void *buckets;
     void *spare;
     void *edata;
@@ -444,6 +445,15 @@ void hashmap_free(struct hashmap *map) {
 // system being out of memory.
 bool hashmap_oom(struct hashmap *map) {
     return map->oom;
+}
+
+inline bool hashmap_dirty(struct hashmap *map) {
+    return map->dirty;
+}
+
+inline bool hashmap_set_dirty(struct hashmap *map, bool dirty) {
+    map->dirty = dirty;
+    return map->dirty;
 }
 
 // hashmap_scan iterates over all items in the hash map

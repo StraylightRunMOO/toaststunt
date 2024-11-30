@@ -152,13 +152,11 @@ complex_free_var(Var v)
                 free_str(v.v.str);
             break;
         case TYPE_LIST:
-            if (delref(v.v.list) == 0) {
-                destroy_list(v);
+            if (delref(v.v.list) == 0 && destroy_list(v)) {
                 gc_set_color(v.v.list, GC_BLACK);
                 if (!gc_is_buffered(v.v.list))
                     myfree(v.v.list, M_LIST);
-            }
-            else
+            } else
                 gc_possible_root(v);
             break;
         case TYPE_MAP:
@@ -166,8 +164,7 @@ complex_free_var(Var v)
                 gc_set_color(v.v.map, GC_BLACK);
                 if (!gc_is_buffered(v.v.map))
                     myfree(v.v.map, M_TREE);
-            }
-            else
+            } else
                 gc_possible_root(v);
             break;
         case TYPE_WAIF:
@@ -219,12 +216,12 @@ complex_free_var(Var v)
                 free_str(v.v.str);
             break;
         case TYPE_LIST:
-            if (delref(v.v.list) == 0)
-                destroy_list(v);
+            if (delref(v.v.list) == 0 && destroy_list(v))
+                myfree(v.v.list, M_LIST);
             break;
         case TYPE_MAP:
             if (delref(v.v.map) == 0 && destroy_map(v))
-                myfree(map.v.map, M_TREE);
+                myfree(v.v.map, M_TREE);
             break;
         case TYPE_WAIF:
             if (delref(v.v.waif) == 0) {
@@ -368,7 +365,7 @@ is_true(Var v)
         case TYPE_STR:
             return v.v.str && *v.v.str != '\0';
         case TYPE_LIST:
-            return v.v.list[0].v.num != 0;
+            return v.length() != 0;
         case TYPE_MAP:
             return !mapempty(v);
         case TYPE_BOOL:

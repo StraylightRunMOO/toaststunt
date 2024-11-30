@@ -19,36 +19,40 @@
 #define Functions_h 1
 
 #include <stdio.h>
+#include <variant>
 
 #include "config.h"
 #include "execute.h"
 #include "program.h"
 #include "structures.h"
 
+struct raise_t {
+	Var code;
+	Var value;
+	const char *msg;
+};
+
+struct call_t {
+	Byte pc;
+	void *data;
+};
+
+struct susp_t {
+	enum error (*proc) (vm, void *);
+	void *data;
+};
+
+typedef std::variant<Var, raise_t, call_t, susp_t> package_t;
+
 typedef struct {
     enum {
-	BI_RETURN,		/* Normal function return */
-	BI_RAISE,		/* Raising an error */
-	BI_CALL,		/* Making a nested verb call */
-	BI_SUSPEND,		/* Suspending the current task */
-	BI_KILL			/* Killing the current task */
+			BI_RETURN,	//Normal function return 
+			BI_RAISE,		// Raising an error 
+			BI_CALL,		// Making a nested verb call 
+			BI_SUSPEND, // Suspending the current task 
+			BI_KILL			// Killing the current task 
     } kind;
-    union {
-	Var ret;
-	struct {
-	    Var code;
-	    const char *msg;
-	    Var value;
-	} raise;
-	struct {
-	    Byte pc;
-	    void *data;
-	} call;
-	struct {
-	    enum error (*proc) (vm, void *);
-	    void *data;
-	} susp;
-    } u;
+    package_t u;
 } package;
 
 void register_bi_functions(void);

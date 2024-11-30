@@ -212,15 +212,15 @@ bf_server_log(Var arglist, Byte next, void *vdata, Objid progr)
         free_var(arglist);
         return make_error_pack(E_PERM);
     } else {
-        const char *message = arglist.v.list[1].v.str;
+        const char *message = arglist[1].v.str;
         int level = LOG_NONE;
 
-        if (arglist.v.list[0].v.num == 2) {
-            if (TYPE_INT == arglist.v.list[2].type
-                    && LOG_NONE <= arglist.v.list[2].v.num
-                    && LOG_ERROR >= arglist.v.list[2].v.num) {
-                level = arglist.v.list[2].v.num;
-            } else if (is_true(arglist.v.list[2])) {
+        if (arglist.length() == 2) {
+            if (TYPE_INT == arglist[2].type
+                    && LOG_NONE <= arglist[2].v.num
+                    && LOG_ERROR >= arglist[2].v.num) {
+                level = arglist[2].v.num;
+            } else if (is_true(arglist[2])) {
                 level = LOG_ERROR;
             }
         }

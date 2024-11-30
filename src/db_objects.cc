@@ -246,10 +246,10 @@ db_destroy_object(Objid oid)
         panic_moo("DB_DESTROY_OBJECT: Invalid object!");
 
     if (o->location.v.obj != NOTHING ||
-            o->contents.v.list[0].v.num != 0 ||
+            o->contents.length() != 0 ||
             (o->parents.type == TYPE_OBJ && o->parents.v.obj != NOTHING) ||
-            (o->parents.type == TYPE_LIST && o->parents.v.list[0].v.num != 0) ||
-            o->children.v.list[0].v.num != 0)
+            (o->parents.type == TYPE_LIST && o->parents.length() != 0) ||
+            o->children.length() != 0)
         panic_moo("DB_DESTROY_OBJECT: Not a barren orphan!");
 
     free_var(o->parents);
@@ -491,21 +491,21 @@ db_renumber_object(Objid old)
             FOR_EACH(obj2, objects[obj1.v.obj]->down, i2, c2)       \
             if (obj2.v.obj == old)                  \
                 break;                      \
-            objects[obj1.v.obj]->down.v.list[i2].v.obj = _new;      \
+            objects[obj1.v.obj]->down[i2].v.obj = _new;      \
         }                               \
     }                                   \
     else if (TYPE_OBJ == o->up.type && NOTHING != o->up.v.obj) {    \
         FOR_EACH(obj1, objects[o->up.v.obj]->down, i2, c2)      \
         if (obj1.v.obj == old)                      \
             break;                          \
-        objects[o->up.v.obj]->down.v.list[i2].v.obj = _new;     \
+        objects[o->up.v.obj]->down[i2].v.obj = _new;     \
     }                                   \
     FOR_EACH(obj1, o->down, i1, c1) {                   \
         if (TYPE_LIST == objects[obj1.v.obj]->up.type) {        \
             FOR_EACH(obj2, objects[obj1.v.obj]->up, i2, c2)     \
             if (obj2.v.obj == old)                  \
                 break;                      \
-            objects[obj1.v.obj]->up.v.list[i2].v.obj = _new;        \
+            objects[obj1.v.obj]->up[i2].v.obj = _new;        \
         }                               \
         else {                              \
             objects[obj1.v.obj]->up.v.obj = _new;           \
@@ -521,9 +521,9 @@ db_renumber_object(Objid old)
             if (is_user(_new)) {
                 int i;
 
-                for (i = 1; i <= all_users.v.list[0].v.num; i++)
-                    if (all_users.v.list[i].v.obj == old) {
-                        all_users.v.list[i].v.obj = _new;
+                for (i = 1; i <= all_users.length(); i++)
+                    if (all_users[i].v.obj == old) {
+                        all_users[i].v.obj = _new;
                         break;
                     }
             }
@@ -655,8 +655,7 @@ db_object_bytes(Var obj)
                 if (bit_is_false(bit_array, oid)) {                          \
                     bit_true(bit_array, oid);                                \
                     ++(*px);                                                 \
-                    plist->v.list[*px].type = TYPE_OBJ;                      \
-                    plist->v.list[*px].v.obj = oid;                          \
+                    (*plist)[*px] = Var::new_obj(oid);                       \
                     o2 = dbpriv_find_object(oid);                            \
                     db2_add_##name(o2, plist, px);                           \
                 }                                                            \
@@ -685,13 +684,13 @@ db_object_bytes(Var obj)
         list = new_list(n);                                                  \
                                                                              \
         if (full)                                                            \
-            list.v.list[++i] = var_ref(obj);                                 \
+            list[++i] = var_ref(obj);                                        \
                                                                              \
         CLEAR_BIT_ARRAY();                                                   \
                                                                              \
         db2_add_##name(o, &list, &i);                                        \
                                                                              \
-        list.v.list[0].v.num = i; /* sketchy */                              \
+        list[(Num)0].v.num = i; /* sketchy */                                \
                                                                              \
         return list;                                                         \
     }
@@ -868,7 +867,7 @@ db_for_all_children(Objid oid, int (*func) (void *, Objid), void *data)
     int i, c = db_count_children(oid);
 
     for (i = 1; i <= c; i++)
-        if (func(data, objects[oid]->children.v.list[i].v.obj))
+        if (func(data, objects[oid]->children[i].v.obj))
             return 1;
 
     return 0;
@@ -884,7 +883,7 @@ check_for_duplicates(Var list)
 
     for (i = 1; i <= c; i++)
         for (j = i + i; j <= c; j++)
-            if (equality(list.v.list[i], list.v.list[j], 1))
+            if (equality(list[i], list[j], 1))
                 return 0;
 
     return 1;
@@ -1036,7 +1035,7 @@ db_for_all_contents(Objid oid, int (*func) (void *, Objid), void *data)
     int i, c = db_count_contents(oid);
 
     for (i = 1; i <= c; i++)
-        if (func(data, objects[oid]->contents.v.list[i].v.obj))
+        if (func(data, objects[oid]->contents[i].v.obj))
             return 1;
 
     return 0;
@@ -1057,7 +1056,7 @@ db_change_location(Objid oid, Objid new_location, int position)
 
     if (valid(new_location)) {
         if (position <= 0)
-            position = objects[new_location]->contents.v.list[0].v.num + 1;
+            position = objects[new_location]->contents.length() + 1;
 
         objects[new_location]->contents = listinsert(objects[new_location]->contents, me, position);
     }

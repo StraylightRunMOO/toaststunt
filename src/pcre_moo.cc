@@ -123,11 +123,11 @@ bf_pcre_match(Var arglist, Byte next, void *vdata, Objid progr)
     unsigned char options = 0;
     unsigned char flags = FIND_ALL;
 
-    subject = arglist.v.list[1].v.str;
-    pattern = arglist.v.list[2].v.str;
-    options = (arglist.v.list[0].v.num >= 3 && is_true(arglist.v.list[3])) ? 0 : PCRE_CASELESS;
+    subject = arglist[1].v.str;
+    pattern = arglist[2].v.str;
+    options = (arglist.length() >= 3 && is_true(arglist[3])) ? 0 : PCRE_CASELESS;
 
-    if (arglist.v.list[0].v.num >= 4 && arglist.v.list[4].v.num == 0)
+    if (arglist.length() >= 4 && arglist[4].num() == 0)
         flags ^= FIND_ALL;
 
     /* Return E_INVARG if the pattern or subject are empty. */
@@ -319,19 +319,19 @@ static void delete_cache_entry(const char *pattern, unsigned char options)
 static Var result_indices(int ovector[], int n)
 {
     Var pos = new_list(2);
-    pos.v.list[1].type = TYPE_INT;
-    pos.v.list[2].type = TYPE_INT;
+    pos[1].type = TYPE_INT;
+    pos[2].type = TYPE_INT;
 
-    pos.v.list[2].v.num = ovector[2 * n + 1];
-    pos.v.list[1].v.num = ovector[2 * n] + 1;
+    pos[2].v.num = ovector[2 * n + 1];
+    pos[1].v.num = ovector[2 * n] + 1;
     return pos;
 }
 
 static package
 bf_pcre_replace(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    const char *linebuf = arglist.v.list[1].v.str;
-    const char *pattern = arglist.v.list[2].v.str;
+    const char *linebuf = arglist[1].v.str;
+    const char *pattern = arglist[2].v.str;
 
     int err;
     pcrs_job *job = pcrs_compile_command(pattern, &err);
@@ -390,9 +390,9 @@ bf_pcre_cache_stats(Var arglist, Byte next, void *vdata, Objid progr)
     for (const auto& x : pcre_pattern_cache) {
         count++;
         Var entry = new_list(2);
-        entry.v.list[1] = str_dup_to_var(x.first.first);
-        entry.v.list[2] = Var::new_int(x.second->cache_hits);
-        ret.v.list[count] = entry;
+        entry[1] = str_dup_to_var(x.first.first);
+        entry[2] = Var::new_int(x.second->cache_hits);
+        ret[count] = entry;
     }
 
     return make_var_pack(ret);

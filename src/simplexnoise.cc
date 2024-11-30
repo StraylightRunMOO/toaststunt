@@ -522,8 +522,8 @@ static double snoise4(double x, double y, double z, double w) {
 
 static package
 bf_simplex_noise(Var arglist, Byte next, void *vdata, Objid progr) {
-    for (int x = 1; x <= arglist.v.list[1].v.list[0].v.num; x++) {
-        if (arglist.v.list[1].v.list[x].type != TYPE_FLOAT) {
+    for (int x = 1; x <= arglist[1].length(); x++) {
+        if (arglist[1][x].type != TYPE_FLOAT) {
             free_var(arglist);
             return make_error_pack(E_TYPE);
         }
@@ -532,19 +532,19 @@ bf_simplex_noise(Var arglist, Byte next, void *vdata, Objid progr) {
     Var r;
     r.type = TYPE_FLOAT;
     // Super ghetto, yay!
-    switch (arglist.v.list[1].v.list[0].v.num)
+    switch (arglist[1].length())
     {
         case 1:
-            r.v.fnum = snoise1(arglist.v.list[1].v.list[1].v.fnum);
+            r.v.fnum = snoise1(arglist[1][1].v.fnum);
             break;
         case 2:
-            r.v.fnum = snoise2(arglist.v.list[1].v.list[1].v.fnum, arglist.v.list[1].v.list[2].v.fnum);
+            r.v.fnum = snoise2(arglist[1][1].v.fnum, arglist[1][2].v.fnum);
             break;
         case 3:
-            r.v.fnum = snoise3(arglist.v.list[1].v.list[1].v.fnum, arglist.v.list[1].v.list[2].v.fnum, arglist.v.list[1].v.list[3].v.fnum);
+            r.v.fnum = snoise3(arglist[1][1].v.fnum, arglist[1][2].v.fnum, arglist[1][3].v.fnum);
             break;
         case 4:
-            r.v.fnum = snoise4(arglist.v.list[1].v.list[1].v.fnum, arglist.v.list[1].v.list[2].v.fnum, arglist.v.list[1].v.list[3].v.fnum, arglist.v.list[1].v.list[4].v.fnum);
+            r.v.fnum = snoise4(arglist[1][1].v.fnum, arglist[1][2].v.fnum, arglist[1][3].v.fnum, arglist[1][4].v.fnum);
             break;
         default: {
             r.type = TYPE_ERR;

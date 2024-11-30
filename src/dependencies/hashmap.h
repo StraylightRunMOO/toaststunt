@@ -40,6 +40,9 @@ size_t hashmap_count(struct hashmap *map);
 size_t hashmap_nbuckets(struct hashmap *map);
 
 bool hashmap_oom(struct hashmap *map);
+bool hashmap_dirty(struct hashmap *map);
+bool hashmap_set_dirty(struct hashmap *map, bool dirty);
+
 const void *hashmap_get(struct hashmap *map, const void *item);
 const void *hashmap_set(struct hashmap *map, const void *item);
 const void *hashmap_delete(struct hashmap *map, const void *item);

@@ -197,7 +197,7 @@ dbio_read_var(void)
             l = dbio_read_num();
             r = new_list(l);
             for (i = 0; i < l; i++)
-                r.v.list[i + 1] = dbio_read_var();
+                r[i + 1] = dbio_read_var();
             break;
         case _TYPE_OBSOLETE:
             r = dbio_read_var();
@@ -367,9 +367,9 @@ dbio_write_var(Var v)
            });
             break;
         case TYPE_LIST:
-            dbio_write_num(v.v.list[0].v.num);
-            for (i = 0; i < v.v.list[0].v.num; i++)
-                dbio_write_var(v.v.list[i + 1]);
+            dbio_write_num(v.length());
+            for (i = 0; i < v.length(); i++)
+                dbio_write_var(v[i + 1]);
             break;
         case TYPE_ANON:
             db_write_anonymous(v);

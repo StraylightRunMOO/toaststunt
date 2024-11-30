@@ -19,12 +19,13 @@
 #define EXT_LIST_H 1
 
 #include <functional>
+#include <random>
 
 #include "structures.h"
 #include "streams.h"
 
 extern Var new_list(int size);
-extern void destroy_list(Var list);
+extern bool destroy_list(Var list);
 extern Var list_dup(Var list);
 
 extern Var listappend(Var list, Var value);
@@ -50,6 +51,7 @@ extern Var strget(Var str, int i);
 extern const char *value2str(Var);
 extern void unparse_value(Stream *, Var);
 extern Var toliteral(Var);
+extern std::string toliteralc(Var);
 
 /*
  * Returns the length of the given list `l'.  Does *not* check to
@@ -58,7 +60,7 @@ extern Var toliteral(Var);
 static inline Num
 listlength(Var l)
 {
-    return l.v.list[0].v.num;
+    return l.length();
 }
 
 /*
@@ -71,11 +73,10 @@ listlength(Var l)
 static inline Var
 enlist_var(Var v)
 {
-    if (TYPE_LIST == v.type)
-	return v;
+    if (TYPE_LIST == v.type) return v;
 
     Var r = new_list(1);
-    r.v.list[1] = v;
+    r[1] = v;
     return r;
 }
 
@@ -92,14 +93,14 @@ enlist_var(Var v)
  *   }
  */
 #define FOR_EACH(val, lst, idx, cnt)				\
-for (idx = 1, cnt = lst.v.list[0].v.num;			\
-     idx <= cnt && (val = lst.v.list[idx], 1);			\
+for (idx = 1, cnt = lst.length();			\
+     idx <= cnt && (val = lst[idx], 1);			\
      idx++)
 
 /*
  * Pop the first value off `stck' and put it in `tp'.
  */
 #define POP_TOP(tp, stck)					\
-tp = var_ref(stck.v.list[1]);					\
+tp = var_ref(stck[1]);					\
 stck = listdelete(stck, 1);
 #endif

@@ -258,8 +258,7 @@ add_literal(Var v, State * state)
         if (gstate->num_literals == gstate->max_literals) {
             unsigned new_max = gstate->max_literals == 0
                                ? 5 : 2 * gstate->max_literals;
-            Var *new_literals = (Var *)mymalloc(sizeof(Var) * new_max,
-                                                M_CODE_GEN);
+            Var *new_literals = (Var*)mymalloc(sizeof(Var) * new_max, M_CODE_GEN);
 
             if (gstate->literals) {
                 for (i = 0; i < gstate->num_literals; i++)
@@ -267,6 +266,7 @@ add_literal(Var v, State * state)
 
                 myfree(literals, M_CODE_GEN);
             }
+
             gstate->literals = new_literals;
             gstate->max_literals = new_max;
         }
@@ -1399,8 +1399,7 @@ generate_code(Stmt * stmt, DB_Version version)
     if (gstate.literals) {
         unsigned i;
 
-        prog->literals = (Var *)mymalloc(sizeof(Var) * gstate.num_literals,
-                                         M_LIT_LIST);
+        prog->literals = (Var *)mymalloc(sizeof(Var) * gstate.num_literals, M_LIT_LIST);
         prog->num_literals = gstate.num_literals;
         for (i = 0; i < gstate.num_literals; i++)
             prog->literals[i] = gstate.literals[i];

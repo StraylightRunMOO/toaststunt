@@ -231,9 +231,9 @@ bf_salt(Var arglist, Byte next, void *vdata, Objid progr)
     Var r;
     package p;
 
-    const char *prefix = arglist.v.list[1].v.str;
+    const char *prefix = arglist[1].v.str;
     size_t prefix_length = memo_strlen(prefix);
-    const char *input = arglist.v.list[2].v.str;
+    const char *input = arglist[2].v.str;
 
     const char *rest;
     size_t rest_length;
@@ -241,7 +241,7 @@ bf_salt(Var arglist, Byte next, void *vdata, Objid progr)
     int format;
 
     if (!parse_prefix(prefix, prefix_length, &rest, &rest_length, &count, &format)) {
-        p = make_raise_pack(E_INVARG, "Invalid prefix", var_ref(arglist.v.list[1]));
+        p = make_raise_pack(E_INVARG, "Invalid prefix", var_ref(arglist[1]));
         free_var(arglist);
         return p;
     }
@@ -262,7 +262,7 @@ bf_salt(Var arglist, Byte next, void *vdata, Objid progr)
               memchr(_crypt_itoa64, prefix[1], 64)))
         use = _crypt_gensalt_traditional_rn;
     else {
-        p = make_raise_pack(E_INVARG, "Invalid prefix", var_ref(arglist.v.list[1]));
+        p = make_raise_pack(E_INVARG, "Invalid prefix", var_ref(arglist[1]));
         free_var(arglist);
         return p;
     }
@@ -272,7 +272,7 @@ bf_salt(Var arglist, Byte next, void *vdata, Objid progr)
     const char *random = binary_to_raw_bytes(input, &random_length);
 
     if (nullptr == random) {
-        p = make_raise_pack(E_INVARG, "Invalid binary input", var_ref(arglist.v.list[2]));
+        p = make_raise_pack(E_INVARG, "Invalid binary input", var_ref(arglist[2]));
         free_var(arglist);
         return p;
     }
@@ -310,7 +310,7 @@ bf_crypt(Var arglist, Byte next, void *vdata, Objid progr)
 
     char temp[3];
 
-    if (arglist.v.list[0].v.num == 1 || memo_strlen(arglist.v.list[2].v.str) < 2) {
+    if (arglist.length() == 1 || memo_strlen(arglist[2].v.str) < 2) {
         /* provide a random 2-letter salt, works with old and new crypts */
         temp[0] = saltstuff[RANDOM() % (int) strlen(saltstuff)];
         temp[1] = saltstuff[RANDOM() % (int) strlen(saltstuff)];
@@ -318,8 +318,8 @@ bf_crypt(Var arglist, Byte next, void *vdata, Objid progr)
         salt = temp;
         salt_length = 2;
     } else {
-        salt = arglist.v.list[2].v.str;
-        salt_length = memo_strlen(arglist.v.list[2].v.str);
+        salt = arglist[2].v.str;
+        salt_length = memo_strlen(arglist[2].v.str);
     }
 
     const char *rest;
@@ -348,7 +348,7 @@ bf_crypt(Var arglist, Byte next, void *vdata, Objid progr)
         errno = 0;
 
         char output[64];
-        char *ret = _crypt_blowfish_rn(arglist.v.list[1].v.str, salt, output, sizeof(output));
+        char *ret = _crypt_blowfish_rn(arglist[1].v.str, salt, output, sizeof(output));
 
         if (errno) {
             free_var(arglist);
@@ -360,7 +360,7 @@ bf_crypt(Var arglist, Byte next, void *vdata, Objid progr)
     }
     else {
         r.type = TYPE_STR;
-        r.v.str = str_dup(crypt(arglist.v.list[1].v.str, salt));
+        r.v.str = str_dup(crypt(arglist[1].v.str, salt));
     }
 
     free_var(arglist);
@@ -384,10 +384,10 @@ static package
 bf_string_hash(Var arglist, Byte next, void *vdata, Objid progr)
 {
     Var r;
-    int nargs = arglist.v.list[0].v.num;
-    const char *str = arglist.v.list[1].v.str;
-    const char *algo = (1 < nargs) ? arglist.v.list[2].v.str : "sha256";
-    int binary = (2 < nargs) ? is_true(arglist.v.list[3]) : 0;
+    int nargs = arglist.length();
+    const char *str = arglist[1].v.str;
+    const char *algo = (1 < nargs) ? arglist[2].v.str : "sha256";
+    int binary = (2 < nargs) ? is_true(arglist[3]) : 0;
 
 #define CASE(op, temp)                          \
     op (!strcasecmp(#temp, algo)) {                 \
@@ -422,10 +422,10 @@ bf_binary_hash(Var arglist, Byte next, void *vdata, Objid progr)
     try {
         Var r;
         int length;
-        int nargs = arglist.v.list[0].v.num;
-        const char *bytes = binary_to_raw_bytes(arglist.v.list[1].v.str, &length);
-        const char *algo = (1 < nargs) ? arglist.v.list[2].v.str : "sha256";
-        int binary = (2 < nargs) ? is_true(arglist.v.list[3]) : 0;
+        int nargs = arglist.length();
+        const char *bytes = binary_to_raw_bytes(arglist[1].v.str, &length);
+        const char *algo = (1 < nargs) ? arglist[2].v.str : "sha256";
+        int binary = (2 < nargs) ? is_true(arglist[3]) : 0;
 
 #define CASE(op, temp)                          \
     op (!strcasecmp(#temp, algo)) {             \
@@ -469,11 +469,11 @@ bf_value_hash(Var arglist, Byte next, void *vdata, Objid progr)
     TRY_STREAM;
     try {
         Var r;
-        int nargs = arglist.v.list[0].v.num;
-        const char *algo = (1 < nargs) ? arglist.v.list[2].v.str : "sha256";
-        int binary = (2 < nargs) ? is_true(arglist.v.list[3]) : 0;
+        int nargs = arglist.length();
+        const char *algo = (1 < nargs) ? arglist[2].v.str : "sha256";
+        int binary = (2 < nargs) ? is_true(arglist[3]) : 0;
 
-        unparse_value(s, arglist.v.list[1]);
+        unparse_value(s, arglist[1]);
 
 #define CASE(op, temp)                                  \
     op (!strcasecmp(#temp, algo)) {                     \
@@ -516,15 +516,15 @@ bf_string_hmac(Var arglist, Byte next, void *vdata, Objid progr)
     try {
         Var r;
 
-        int nargs = arglist.v.list[0].v.num;
-        const char *algo = (2 < nargs) ? arglist.v.list[3].v.str : "sha256";
-        int binary = (3 < nargs) ? is_true(arglist.v.list[4]) : 0;
+        int nargs = arglist.length();
+        const char *algo = (2 < nargs) ? arglist[3].v.str : "sha256";
+        int binary = (3 < nargs) ? is_true(arglist[4]) : 0;
 
-        const char *str = arglist.v.list[1].v.str;
+        const char *str = arglist[1].v.str;
         int str_length = memo_strlen(str);
 
         int key_length;
-        const char *key = binary_to_raw_bytes(arglist.v.list[2].v.str, &key_length);
+        const char *key = binary_to_raw_bytes(arglist[2].v.str, &key_length);
 
         if (!key) {
             p = make_error_pack(E_INVARG);
@@ -572,12 +572,12 @@ bf_binary_hmac(Var arglist, Byte next, void *vdata, Objid progr)
     try {
         Var r;
 
-        int nargs = arglist.v.list[0].v.num;
-        const char *algo = (2 < nargs) ? arglist.v.list[3].v.str : "sha256";
-        int binary = (3 < nargs) ? is_true(arglist.v.list[4]) : 0;
+        int nargs = arglist.length();
+        const char *algo = (2 < nargs) ? arglist[3].v.str : "sha256";
+        int binary = (3 < nargs) ? is_true(arglist[4]) : 0;
 
         int bytes_length;
-        const char *bytes = binary_to_raw_bytes(arglist.v.list[1].v.str, &bytes_length);
+        const char *bytes = binary_to_raw_bytes(arglist[1].v.str, &bytes_length);
 
         if (!bytes) {
             p = make_error_pack(E_INVARG);
@@ -588,7 +588,7 @@ bf_binary_hmac(Var arglist, Byte next, void *vdata, Objid progr)
             bytes = bytes_new;
 
             int key_length;
-            const char *key = binary_to_raw_bytes(arglist.v.list[2].v.str, &key_length);
+            const char *key = binary_to_raw_bytes(arglist[2].v.str, &key_length);
 
             if (!key) {
                 free_str(bytes);
@@ -639,16 +639,16 @@ bf_value_hmac(Var arglist, Byte next, void *vdata, Objid progr)
     try {
         Var r;
 
-        int nargs = arglist.v.list[0].v.num;
-        const char *algo = (2 < nargs) ? arglist.v.list[3].v.str : "sha256";
-        int binary = (3 < nargs) ? is_true(arglist.v.list[4]) : 0;
+        int nargs = arglist.length();
+        const char *algo = (2 < nargs) ? arglist[3].v.str : "sha256";
+        int binary = (3 < nargs) ? is_true(arglist[4]) : 0;
 
-        unparse_value(s, arglist.v.list[1]);
+        unparse_value(s, arglist[1]);
         const char *lit = str_dup(stream_contents(s));
         int lit_length = stream_length(s);
 
         int key_length;
-        const char *key = binary_to_raw_bytes(arglist.v.list[2].v.str, &key_length);
+        const char *key = binary_to_raw_bytes(arglist[2].v.str, &key_length);
 
         if (!key) {
             free_str(lit);
