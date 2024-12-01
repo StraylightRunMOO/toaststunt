@@ -85,7 +85,7 @@ struct stack_item {
 static void
 push(struct stack_item **top, Var v)
 {
-    struct stack_item *item = (struct stack_item *)malloc(sizeof(struct stack_item));
+    struct stack_item *item = (struct stack_item *)mymalloc(sizeof(struct stack_item), M_STRUCT);
     item->prev = *top;
     item->v = v;
     *top = item;
@@ -97,7 +97,7 @@ pop(struct stack_item **top)
     struct stack_item *item = *top;
     *top = item->prev;
     Var v = item->v;
-    free(item);
+    myfree(item, M_STRUCT);
     return v;
 }
 
@@ -119,9 +119,6 @@ struct parse_context {
 struct generate_context {
     mode_type mode;
 };
-
-#define ARRAY_SENTINEL -1
-#define MAP_SENTINEL -2
 
 static const char *
 value_to_literal(Var v)
@@ -323,9 +320,9 @@ handle_start_map(void *ctx)
         return 0;
 
     Var k, v;
-    k.type = (var_type)MAP_SENTINEL;
+    k.type = TYPE_CLEAR;
     PUSH(pctx->top, k);
-    v.type = (var_type)MAP_SENTINEL;
+    v.type = TYPE_CLEAR;
     PUSH(pctx->top, v);
     pctx->depth++;
     return 1;
@@ -338,7 +335,7 @@ handle_end_map(void *ctx)
     Var map = new_map(0);
     Var k, v;
     for (v = POP(pctx->top), k = POP(pctx->top);
-            (int)v.type > MAP_SENTINEL && (int)k.type > MAP_SENTINEL;
+            (int)v.type != TYPE_CLEAR && (int)k.type != TYPE_CLEAR;
             v = POP(pctx->top), k = POP(pctx->top)) {
         map = mapinsert(map, k, v);
     }
@@ -356,7 +353,7 @@ handle_start_array(void *ctx)
         return 0;
 
     Var v;
-    v.type = (var_type)ARRAY_SENTINEL;
+    v.type = TYPE_CLEAR;
     PUSH(pctx->top, v);
     pctx->depth++;
     return 1;
@@ -368,7 +365,7 @@ handle_end_array(void *ctx)
     struct parse_context *pctx = (struct parse_context *)ctx;
     Var list = new_list(0);
     Var v;
-    for (v = POP(pctx->top); (int)v.type > ARRAY_SENTINEL;
+    for (v = POP(pctx->top); (int)v.type != TYPE_CLEAR;
             v = POP(pctx->top)) {
         list = listinsert(list, v, 1);
     }
