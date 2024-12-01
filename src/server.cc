@@ -85,7 +85,7 @@
 #endif
 
 extern "C" {
-#include "dependencies/linenoise.h"
+    #include "dependencies/linenoise.h"
 }
 
 #define RANDOM_DEVICE "/dev/urandom"
@@ -1934,6 +1934,7 @@ int waif_conversion_type = _TYPE_WAIF;    /* For shame. We can remove this somed
 int
 main(int argc, char **argv)
 {
+    alloc_init();
     this_program = str_dup(argv[0]);
     const char *log_file = nullptr;
     const char *script_file = nullptr;
@@ -2347,9 +2348,7 @@ main(int argc, char **argv)
         initial_listeners.shrink_to_fit();
 
         main_loop();
-
         background_shutdown();
-
         network_shutdown();
     }
 
@@ -2363,7 +2362,8 @@ main(int argc, char **argv)
     pcre_shutdown();
 
     free_str(this_program);
-
+    alloc_finalize();
+    
     return 0;
 }
 
