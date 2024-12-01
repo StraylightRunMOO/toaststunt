@@ -173,13 +173,13 @@ endif()
 
 # Millions of source files
 set(src_CSRCS
-    src/dependencies/thpool.c
-    src/dependencies/sosemanuk.c
-    src/dependencies/linenoise.c
-    src/dependencies/strnatcmp.c
     src/dependencies/hashmap.c
     src/http_parser.c
-    src/regexpr.c)
+    src/dependencies/linenoise.c
+    src/regexpr.c
+    src/dependencies/rpmalloc/rpmalloc.c
+    src/dependencies/sosemanuk.c
+    src/dependencies/strnatcmp.c)
 
 if(PCRE_FOUND)
     list(APPEND src_CSRCS src/dependencies/pcrs.c)
@@ -255,7 +255,8 @@ set(src_CXXSRCS
     src/simplexnoise.cc
     src/argon2.cc
     src/spellcheck.cc
-    src/curl.cc)
+    src/curl.cc
+    src/dependencies/thpool.cc)
 
 set(src_GRAMMAR
     ${BISON_MOOParser_OUTPUTS})

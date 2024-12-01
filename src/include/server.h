@@ -29,6 +29,7 @@
 #include <stdio.h>
 
 #include "config.h"
+#include "options.h"
 
 typedef struct {		/* Server's handle on a connection */
     void *ptr;
@@ -39,6 +40,35 @@ typedef struct {		/* Server's handle on a listening point */
 } server_listener;
 
 #include "network.h"		/* Include this *after* defining the types */
+
+#ifdef USE_RPMALLOC
+
+extern "C" {
+    #include "../dependencies/rpmalloc/rpmalloc.h"
+}
+
+static void alloc_init() {
+    rpmalloc_config_t config = {0};
+    config.enable_huge_pages = ALLOC_ENABLE_HUGE;
+    config.page_size         = ALLOC_PAGE_SIZE;
+    rpmalloc_initialize_config(0, &config);
+}
+
+static void alloc_finalize() {
+  rpmalloc_finalize();
+}
+
+#else 
+
+static void alloc_init() {
+	;
+}
+
+static void alloc_finalize() {
+    ;
+}
+
+#endif
 
 extern server_listener null_server_listener;
 

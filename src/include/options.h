@@ -54,6 +54,19 @@
 #define GC_ROOTS_LIMIT 2000
 
 /******************************************************************************
+ * Enable/disable the custom allocator and set some basic options below.
+ * More advanced options including stats / fine-grained performance tuning
+ * can be found in /src/dependencies/rpmalloc.c
+*/
+
+/* #define USE_RPMALLOC */
+
+#ifdef USE_RPMALLOC
+  #define ALLOC_PAGE_SIZE   4 * 1024 * 1024
+  #define ALLOC_ENABLE_HUGE 1
+#endif 
+
+/******************************************************************************
  * Define LOG_GC_STATS to enabled logging of reference cycle collection
  * stats and debugging information while the server is running.
  */

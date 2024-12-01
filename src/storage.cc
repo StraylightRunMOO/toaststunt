@@ -27,6 +27,11 @@
 #include "structures.h"
 #include "utils.h"
 
+#ifdef USE_RPMALLOC
+    #include "dependencies/rpmalloc/rpmalloc.h"
+    #include "dependencies/rpmalloc/rpnew.h"
+#endif
+
 static inline int
 refcount_overhead(Memory_Type type)
 {
@@ -64,7 +69,12 @@ mymalloc(unsigned size, Memory_Type type)
     
     offs = refcount_overhead(type);
     
-    memptr = (char *) malloc(offs + size);
+    #ifdef USE_RPMALLOC
+      memptr = (char *) rpmalloc(offs + size);
+    #else
+      memptr = (char *) malloc(offs + size);
+    #endif
+
     if (!memptr) {
         sprintf(msg, "memory allocation (size %u) failed!", offs + size);
         panic_moo(msg);
@@ -108,8 +118,12 @@ mycalloc(unsigned count, unsigned size, Memory_Type type)
         size = 1;
     
     offs = refcount_overhead(type);
-    
-    memptr = (char *) calloc(count, offs + size);
+
+    #ifdef USE_RPMALLOC
+        memptr = (char *)rpcalloc(count, offs + size);
+    #else
+        memptr = (char *) calloc(count, offs + size);
+    #endif
 
     if (!memptr) {
         sprintf(msg, "memory allocation (size %u) failed!", offs + size);
@@ -182,7 +196,12 @@ myrealloc(void *ptr, unsigned size, Memory_Type type)
     int offs = refcount_overhead(type);
     static char msg[100];
 
-    ptr = realloc((char *) ptr - offs, size + offs);
+    #ifdef USE_RPMALLOC
+      ptr = rprealloc((char *)ptr - offs, size + offs);
+    #else
+      ptr = realloc((char *) ptr - offs, size + offs);
+    #endif 
+
     if (!ptr) {
         sprintf(msg, "memory re-allocation (size %u) failed!", size);
         panic_moo(msg);
@@ -194,5 +213,9 @@ myrealloc(void *ptr, unsigned size, Memory_Type type)
 void
 myfree(void *ptr, Memory_Type type)
 {
-    free((char *) ptr - refcount_overhead(type));
+    #ifdef USE_RPMALLOC
+      rpfree((char *)ptr - refcount_overhead(type));
+    #else
+      free((char *) ptr - refcount_overhead(type));
+    #endif
 }

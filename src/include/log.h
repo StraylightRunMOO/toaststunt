@@ -15,6 +15,9 @@
     Pavel@Xerox.Com
  *****************************************************************************/
 
+#ifndef LOG_H
+#define LOG_H 1
+
 #include <stdio.h>
 
 #include "config.h"
@@ -36,3 +39,5 @@ extern void log_perror(const char *);
 extern void reset_command_history(void);
 extern void log_command_history(void);
 extern void add_command_to_history(Objid player, const char *command);
+
+#endif
