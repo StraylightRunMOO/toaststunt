@@ -404,32 +404,37 @@ listrangeset(Var base, int from, int to, Var value)
 Var
 sublist(Var list, int lower, int upper)
 {
-    if (lower > upper) {
-        free_var(list);
-        return new_list(0);
-    } else {
-        Var r;
-        int i;
+    Var r;
+    int i;
 
+    if(lower < 0)
+        lower = lower + list.length();
+
+    if(upper < 0)
+        upper = upper + list.length();
+
+    if (lower > upper && lower <= list.length() && upper > 0) {
+        r = new_list(lower - upper + 1);
+        for (i = lower; i >= upper; i--)
+            r.v.list[lower - i + 1] = var_ref(list.v.list[i]);
+    } else if(upper > lower && upper <= list.length() && lower > 0) {
         r = new_list(upper - lower + 1);
+        for (i = lower; i <= upper; i++)
+            r.v.list[i - lower + 1] = var_ref(list.v.list[i]);
+    } else if(upper == lower && upper <= list.length() && lower > 0) {
+        r = new_list(1);
+        r.v.list[1] = var_ref(list.v.list[lower]);
+    } else {
+        r = new_list(0);
+    }
 
-        #ifdef MEMO_SIZE
-            var_metadata *metadata  = ((var_metadata*)r.v.list) - 1;
-        #endif
-
-        for (i = lower; i <= upper; i++) {
-            r[i - lower + 1] = var_ref(list[i]);
-            metadata->size += value_bytes(list[i]);
-        }
-
-        free_var(list);
+    free_var(list);
 
 #ifdef ENABLE_GC
         gc_set_color(r.v.list, GC_YELLOW);
 #endif
 
-        return r;
-    }
+    return r;
 }
 
 int
@@ -698,16 +703,28 @@ Var
 substr(Var str, int lower, int upper)
 {
     Var r;
+    bool reverse = false;
 
     r.type = TYPE_STR;
-    if (lower > upper)
+    if ((lower == 0 || upper == 0) && lower > upper)
         r.v.str = str_dup("");
     else {
+        if(lower > upper) {
+            std::swap(lower, upper);
+            reverse = true;
+        }
+
         int loop, index = 0;
         char *s = (char *)mymalloc(upper - lower + 2, M_STRING);
 
-        for (loop = lower - 1; loop < upper; loop++)
-            s[index++] = str.v.str[loop];
+        if(!reverse) {
+            for (loop = lower - 1; loop < upper; loop++)
+                s[index++] = str.v.str[loop];
+        } else {
+            for(loop = upper - 1; loop >= lower - 1; loop--)
+                s[index++] = str.v.str[loop];
+        }
+
         s[index] = '\0';
         r.v.str = s;
     }

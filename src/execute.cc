@@ -1658,7 +1658,9 @@ finish_comparison:
                             free_var(list);
                         }
                     } else if (list.type == TYPE_LIST) {
-                        if (index.v.num <= 0 || index.v.num > list.length()) {
+                        int len = list.length();
+                        if(index.v.num < 0) index.v.num += len;
+                        if (index.v.num <= 0 || index.v.num > len) {
                             free_var(index);
                             free_var(list);
                             PUSH_ERROR(E_RANGE);
@@ -1668,8 +1670,9 @@ finish_comparison:
                             free_var(list);
                         }
                     } else {    /* list.type == TYPE_STR */
-                        if (index.v.num <= 0
-                                || index.v.num > (int) memo_strlen(list.v.str)) {
+                        int len = memo_strlen(list.v.str);
+                        if(index.v.num < 0) index.v.num += len;
+                        if (index.v.num <= 0 || index.v.num > len) {
                             free_var(index);
                             free_var(list);
                             PUSH_ERROR(E_RANGE);
@@ -1811,11 +1814,15 @@ finish_comparison:
                         free_var(iterfrom);
                     }
                 } else {
-                    int len = (base.type == TYPE_STR ? memo_strlen(base.v.str)
-                               : base.length());
-                    if (from.v.num <= to.v.num
-                            && (from.v.num <= 0 || from.v.num > len
-                                || to.v.num <= 0 || to.v.num > len)) {
+                    int len = (base.type == TYPE_STR ? memo_strlen(base.str()) : base.length());
+                    if(to.v.num < 0) to.v.num += len;
+                    if(from.v.num < 0) from.v.num += len;
+                    if(to.v.num < 0 || from.v.num < 0) {
+                        free_var(to);
+                        free_var(from);
+                        free_var(base);
+                        PUSH_ERROR(E_RANGE);
+                    } else if (from.v.num <= to.v.num && (from.v.num <= 0 || from.v.num > len || to.v.num <= 0 || to.v.num > len)) {
                         free_var(to);
                         free_var(from);
                         free_var(base);
@@ -1824,7 +1831,7 @@ finish_comparison:
                         PUSH((base.type == TYPE_STR
                               ? substr(base, from.v.num, to.v.num)
                               : sublist(base, from.v.num, to.v.num)));
-                        /* base freed by substr/sublist */
+                        // base freed by substr/sublist
                         free_var(from);
                         free_var(to);
                     }
