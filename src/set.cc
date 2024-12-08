@@ -23,8 +23,8 @@ do_intersection(Var s1, Var s2, bool count_dup) {
     listforeach(s2, [&m, &count_dup](Var value, int index) -> int {
         Var _new;
         m = (count_dup && maphaskey(m, value) && maplookup(m, value, &_new, 0) != nullptr) ? 
-            mapinsert(m, value, Var::new_int(_new.num()+1)) : 
-            mapinsert(m, value, Var::new_int(1));
+            mapinsert(m, var_ref(value), Var::new_int(_new.num()+1)) : 
+            mapinsert(m, var_ref(value), Var::new_int(1));
         
         return 0;
     });
@@ -37,7 +37,7 @@ do_intersection(Var s1, Var s2, bool count_dup) {
             if(count.num() <= 1)
                 mapdelete(m, value);
             else
-                m = mapinsert(m, value, Var::new_int(count.num()-1));
+                m = mapinsert(m, var_ref(value), Var::new_int(count.num()-1));
         }
 
         return 0;

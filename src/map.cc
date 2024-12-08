@@ -191,7 +191,7 @@ map_dup(Var map)
 
     Var _new = new_map(len);
     mapforeach(map, [&_new](Var key, Var value, int index) -> int { 
-        mapinsert(_new, key, value);
+        mapinsert(_new, var_ref(key), var_ref(value));
         return 0;
     });
 
@@ -378,8 +378,9 @@ int mapforeach(Var map, map_callback func)
     if(key_list.length() > 0) {
         Var value;
         return listforeach(key_list, [&map, &func, &value](Var key, int index) -> int {
-            if(maplookup(map, key, &value, 0) != NULL && value.type != TYPE_CLEAR)
+            if(maplookup(map, key, &value, 0) != NULL && value.type != TYPE_CLEAR) {
                 return func(key, value, index);
+            }
             return 0;
         });
     } else {
@@ -551,17 +552,17 @@ maprangeset(Var map, int from, int to, Var value, Var *_new)
 
     mapforeach(map, [&r, &from](Var key, Var value, int index) -> int {
         int before = (index < from) ? 1 : 0;
-        if(before) r = mapinsert(r, key, value);
+        if(before) r = mapinsert(r, var_ref(key), var_ref(value));
         return before;
     });
 
     mapforeach(value, [&r](Var key, Var value, int index) -> int {
-        r = mapinsert(r, key, value);
+        r = mapinsert(r, var_ref(key), var_ref(value));
         return 0;
     });
 
     mapforeach(map, [&r, &to](Var key, Var value, int index) -> int {
-        if(index > to) r = mapinsert(r, key, value);
+        if(index > to) r = mapinsert(r, var_ref(key), var_ref(value));
         return 0;
     });
 
