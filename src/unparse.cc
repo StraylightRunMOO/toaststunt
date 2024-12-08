@@ -17,6 +17,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <sstream>
 
 #include "ast.h"
 #include "config.h"
@@ -217,6 +218,64 @@ parse_type(var_type var)
         default:
             return "unknown type";
     }
+}
+
+const char*
+parse_type_multi(var_type var)
+{
+    /* We can't use these two special #defines in a switch statement
+       because they're less than the minimum value of the enum. So
+       this is slightly silly, but functional. */
+    Var s, t = new_list(0);
+    s.type = TYPE_STR;
+
+    if (var == TYPE_ANY)
+        return "any type";
+    else if (var & TYPE_NUMERIC == TYPE_NUMERIC)
+        t = listappend(t, str_dup_to_var("number"));
+
+    if((var & TYPE_INT) == TYPE_INT && ((var & TYPE_NUMERIC) != TYPE_NUMERIC))
+        t = listappend(t, str_dup_to_var("integer"));
+    if((var & TYPE_OBJ) == TYPE_OBJ)
+        t = listappend(t, str_dup_to_var("object"));
+    if((var & TYPE_ERR) == TYPE_ERR)
+        t = listappend(t, str_dup_to_var("error"));
+    if((var & TYPE_STR) == TYPE_STR)
+        t = listappend(t, str_dup_to_var("string"));
+    if((var & TYPE_FLOAT) == TYPE_FLOAT && ((var & TYPE_NUMERIC) != TYPE_NUMERIC))
+        t = listappend(t, str_dup_to_var("float"));
+    if((var & TYPE_LIST) == TYPE_LIST)
+        t = listappend(t, str_dup_to_var("list"));
+    if((var & TYPE_MAP) == TYPE_MAP)
+        t = listappend(t, str_dup_to_var("map"));
+    if((var & TYPE_ANON) == TYPE_ANON)
+        t = listappend(t, str_dup_to_var("anonymous object"));
+    if((var & TYPE_WAIF) == TYPE_WAIF)
+        t = listappend(t, str_dup_to_var("waif"));
+    if((var & TYPE_BOOL) == TYPE_BOOL)
+        t = listappend(t, str_dup_to_var("bool"));
+
+    auto len = t.length();
+    if(len == 0) return "unknown type";
+
+    std::ostringstream buffer; 
+
+    if(len == 1) {
+        buffer << t[1].str();
+    } else if(len == 2) {
+        buffer << t[1].v.str << " or " << t[2].v.str;
+    } else {
+        listforeach(t, [&len, &buffer](Var value, int index) -> int {
+            buffer << value.str() << ", ";
+            return index == (len - 1) ? 1 : 0;
+        });
+
+        buffer << "or " << t[len].str();
+    }
+
+    const char *result = str_dup(buffer.str().c_str());
+    free_var(t);
+    return result;
 }
 
 struct prec {

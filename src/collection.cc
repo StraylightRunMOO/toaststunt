@@ -22,12 +22,6 @@
 #include "map.h"
 #include "utils.h"
 
-struct ismember_data {
-    int i;
-    Var value;
-    int case_matters;
-};
-
 int
 ismember(Var lhs, Var rhs, int case_matters)
 {
@@ -42,24 +36,14 @@ ismember(Var lhs, Var rhs, int case_matters)
 
         return 0;
     } else if (rhs.type == TYPE_MAP) {
-        struct ismember_data ismember_data;
-
-        ismember_data.i = 1;
-        ismember_data.value = lhs;
-        ismember_data.case_matters = case_matters;
-
-        return mapforeach(rhs, [&ismember_data](Var key, Var value, int first) -> int {
-            if (equality(value, ismember_data.value, ismember_data.case_matters))
-                return ismember_data.i;
-
-            ismember_data.i++;
-
+        return mapforeach(rhs, [&lhs, &case_matters](Var key, Var value, int index) -> int {
+            if (equality(value, lhs, case_matters))
+                return index;
             return 0;
         });
-
-    } else {
-        return 0;
     }
+
+    return 0;
 }
 
 /**** built in functions ****/

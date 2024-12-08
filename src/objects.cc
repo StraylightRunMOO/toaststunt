@@ -1250,6 +1250,38 @@ bf_owned_objects(Var arglist, Byte next, void *vdata, Objid progr)
     return make_var_pack(ret);
 }
 
+static inline Var object_contents(Var v) {
+    Object *o = dbpriv_find_object(v.obj());
+    return o != nullptr ? var_ref(dbpriv_object_contents(o)) : new_list(0);
+}
+
+static package
+bf_all_contents(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    Var o = arglist[1];
+
+    if(o.obj() == -1) {
+        Var r = new_list(0);
+        Objid last = db_last_used_objid();
+        for(auto i=1; i<=last; i++)
+            if(db_object_location(i) == -1)
+                r = listappend(r, Var::new_obj(i));
+
+        free_var(arglist);
+        return make_var_pack(r);
+    } else if(!is_valid(o)) {
+        free_var(arglist);
+        return make_error_pack(E_INVIND);
+    }
+
+    Var r = object_contents(o);
+    for(auto i=1; i<=r.length(); i++)
+        r = listconcat(r, object_contents(r[i]));
+
+    free_var(arglist);
+    return make_var_pack(r);
+}
+
 Var nothing;        /* useful constant */
 Var clear;          /* useful constant */
 Var none;           /* useful constant */
@@ -1304,4 +1336,5 @@ register_objects(void)
     register_function("recycled_objects", 0, 0, bf_recycled_objects);
     register_function("next_recycled_object", 0, 1, bf_next_recycled_object, TYPE_OBJ);
     register_function("owned_objects", 1, 1, bf_owned_objects, TYPE_OBJ);
+    register_function("all_contents", 1, 1, bf_all_contents, TYPE_OBJ);
 }

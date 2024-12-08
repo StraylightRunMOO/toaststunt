@@ -3,6 +3,7 @@
 
 #include "options.h"
 #include "functions.h"
+#include "collection.h"
 #include "list.h"
 #include "log.h"
 #include "map.h"
@@ -97,8 +98,8 @@ map_element_free(void *item)
     map_entry *entry = (map_entry*)item;
 
     #ifdef MAP_DEBUG
-        Var k = toliteral(entry->key);
-        Var v = toliteral(entry->value);
+        Var k = str_dup_to_var(toliteral(entry->key).c_str());
+        Var v = str_dup_to_var(toliteral(entry->value).c_str());
         oklog("[%d:%d] map[%s] = %s\n", var_refcount(entry->key), var_refcount(entry->value), k.v.str, v.v.str);
 
         free_var(k);
@@ -123,14 +124,15 @@ empty_map()
 }
 
 Var
-new_map(size_t size)
+new_map(size_t size, int preserve_order)
 {
     Var map;
     if(size == 0) {
         map = empty_map();
     } else {
+        Var key_list = new_list(0);
         map.v.map = hashmap_new_with_allocator(map_malloc, map_realloc, map_free, 
-            sizeof(map_entry), size, 0, 0, map_hash, map_compare, map_element_free, NULL);
+            sizeof(map_entry), size, 0, 0, map_hash, map_compare, map_element_free, preserve_order > 0 ? key_list.v.list : nullptr);
         map.type = TYPE_MAP;
         hashmap_set_grow_by_power(map.v.map, 2);
 
@@ -147,12 +149,32 @@ new_map(size_t size)
     return map;
 }
 
+Var 
+mapkeys(Var map) 
+{
+    if(hashmap_count(map.v.map) == 0)
+        return new_list(0);
+
+    Var key_list;
+    key_list.type = TYPE_LIST;
+    key_list.v.list = (Var*)hashmap_get_udata(map.v.map);
+
+    if(key_list.v.list == nullptr)
+        key_list = new_list(0);
+
+    return key_list;
+}
+
 /* called from utils.c */
 bool
 destroy_map(Var map)
 {
     if(map.v.map == emptymap.v.map)
         return false;
+
+    Var map_keys = mapkeys(map);
+    if(map_keys.length() > 0)
+        free_var(map_keys);
 
     hashmap_free(map.v.map);
     return true;
@@ -162,11 +184,14 @@ destroy_map(Var map)
 Var
 map_dup(Var map)
 {
-    Var _new = new_map(maplength(map));
+    auto len = maplength(map);
 
-    mapforeach(map, [&_new](Var key, Var value, int first) -> int { 
-        map_entry _new_entry{.key = var_ref(key), .value = var_ref(value)};
-        hashmap_set(_new.v.map, &_new_entry);
+    if(len == 0) 
+        return new_map(0);
+
+    Var _new = new_map(len);
+    mapforeach(map, [&_new](Var key, Var value, int index) -> int { 
+        mapinsert(_new, key, value);
         return 0;
     });
 
@@ -182,6 +207,50 @@ map_dup(Var map)
     #endif
 
     return _new;
+}
+
+void 
+mapkeyadd(Var map, Var key) 
+{
+    if(hashmap_get_udata(map.v.map) == nullptr)
+        return;
+
+    Var key_list = mapkeys(map);
+    key_list = listappend(key_list, var_ref(key));
+    hashmap_set_udata(map.v.map, key_list.v.list);
+}
+
+void
+mapkeydelete(Var map, Var key) {
+    Var key_list = mapkeys(map);
+    if(key_list.length() == 0)
+        return;
+    
+    int index = mapkeyindex(map, key);
+    if(index > 0) {
+        key_list = listdelete(key_list, index);
+        hashmap_set_udata(map.v.map, key_list.v.list);
+    }
+}
+
+bool
+mapdelete(Var map, Var key)
+{
+    bool deleted = false;
+    map_entry *old_entry;
+    map_entry find{.key = key};
+
+    if((old_entry = (map_entry*)hashmap_delete(map.v.map, (const void*)&find)) != NULL) {
+        #ifdef MEMO_SIZE
+            var_metadata *metadata = ((var_metadata*)map.v.map) - 1;
+            metadata->size -= static_cast<uint32_t>((value_bytes(old_entry->key) + value_bytes(old_entry->value)));
+        #endif
+        deleted = true;
+        mapkeydelete(map, key);
+        map_element_free(old_entry);
+    }
+
+    return deleted;
 }
 
 Var
@@ -214,6 +283,8 @@ mapinsert(Var map, Var key, Var value)
     if(_old_entry != NULL) {
         size_change -= (value_bytes(_old_entry->key) + value_bytes(_old_entry->value));
         map_element_free(_old_entry);
+    } else {
+        mapkeyadd(map, key);
     }
 
     #ifdef ENABLE_GC
@@ -228,39 +299,32 @@ mapinsert(Var map, Var key, Var value)
     return map;
 }
 
-int mapequal(Var lhs, Var rhs, int case_matters)
+int 
+mapequal(Var lhs, Var rhs, int case_matters)
 {
     return 0; // TODO
 }
 
-static inline bool mapclean(Var map) {
+static inline bool 
+mapclean(Var map)
+{
     bool is_dirty = hashmap_dirty(map.v.map);
     if(is_dirty) {
         size_t iter = 1;
         map_entry *item;
-        std::vector<map_entry> keys;
 
-        while (hashmap_iter(map.v.map, &iter, (void**)&item, false))
-            if(item->value.type == TYPE_CLEAR)
-                keys.push_back(map_entry{.key = item->key});
-
-        for(auto &k : keys)
-            if((item = (map_entry*)hashmap_delete(map.v.map, (const void*)&k)) != nullptr)
-                map_element_free(item);
-
+        while (hashmap_iter(map.v.map, &iter, (void**)&item, false)) {
+            if(item->value.type == TYPE_CLEAR && mapdelete(map, item->key))
+                iter = 1;
+        }
         is_dirty = hashmap_set_dirty(map.v.map, false);
     }
-
     return is_dirty;
 }
 
 Num maplength(Var map)
 {
-    if(hashmap_dirty(map.v.map)) {
-        mapclean(map);
-        return maplength(map);
-    }
-
+    mapclean(map);
     return hashmap_count(map.v.map);
 }
 
@@ -279,6 +343,8 @@ map_sizeof(Var map)
 {
     uint32_t size;
 
+    mapclean(map);
+    
     #ifdef MEMO_SIZE
         var_metadata *metadata = ((var_metadata*)map.v.map) - 1;
         if((size = static_cast<int>(metadata->size)) > 0) return size;
@@ -286,7 +352,7 @@ map_sizeof(Var map)
 
     size += static_cast<uint32_t>(sizeof(Var) + sizeof(map.v.map));
 
-    mapforeach(map, [&size](Var key, Var value, int first) -> int {
+    mapforeach(map, [&size](Var key, Var value, int index) -> int {
         size += static_cast<uint32_t>(value_bytes(key)) + static_cast<uint32_t>(value_bytes(value));
         return 0;
     });
@@ -305,18 +371,26 @@ map_sizeof(Var map)
  */
 int mapforeach(Var map, map_callback func)
 { /* does NOT consume `map' */
-    int ret;
-    int first = 1;
-    size_t iter = 1;
-    map_entry *item;
+    if(maplength(map) == 0)
+        return 0;
 
-    while (hashmap_iter(map.v.map, &iter, (void**)&item, false)) {
-        if(item->value.type == TYPE_CLEAR)
-            continue;
-
-        ret = func(item->key, item->value, first);
-        if (ret) return ret;
-        first = 0;
+    Var key_list = mapkeys(map);
+    if(key_list.length() > 0) {
+        Var value;
+        return listforeach(key_list, [&map, &func, &value](Var key, int index) -> int {
+            if(maplookup(map, key, &value, 0) != NULL && value.type != TYPE_CLEAR)
+                return func(key, value, index);
+            return 0;
+        });
+    } else {
+        size_t iter = 1;
+        map_entry *item;
+        int index = 0;
+        while (hashmap_iter(map.v.map, &iter, (void**)&item, false)) {
+            if(item->value.type == TYPE_CLEAR) continue;
+            int ret = func(item->key, item->value, ++index);
+            if(ret) return ret;
+        }
     }
 
     return 0;
@@ -329,11 +403,15 @@ mapfirst(Var map, Var *value)
         return 0;
 
     if(value != nullptr) {
-        size_t iter = 1;
-        map_entry *item;
+        Var map_keys = mapkeys(map);
+        if(map_keys.length() > 0)
+            *value = var_ref(map_keys[1]);
+        else {
+            size_t iter = 1;
+            map_entry *item;
 
-        if(hashmap_iter(map.v.map, &iter, (void**)&item, false)) {
-            *value = var_ref(item->key);
+            if(hashmap_iter(map.v.map, &iter, (void**)&item, false))
+                *value = var_ref(item->key);
         }
     }
 
@@ -348,11 +426,16 @@ maplast(Var map, Var *value)
         return len;
 
     if(value != nullptr) {
-        size_t iter = mapbuckets(map) - 1;
-        map_entry *item;
+        Var map_keys = mapkeys(map);
+        if(map_keys.length() > 0)
+            *value = var_ref(map_keys[map_keys.length()]);
+        else {
+            size_t iter = mapbuckets(map) - 1;
+            map_entry *item;
 
-        if(hashmap_iter(map.v.map, &iter, (void**)&item, true)) {
-            *value = var_ref(item->key);
+            if(hashmap_iter(map.v.map, &iter, (void**)&item, true)) {
+                *value = var_ref(item->key);
+            }
         }
     }
 
@@ -362,20 +445,20 @@ maplast(Var map, Var *value)
 int
 mapkeyindex(Var map, Var key)
 {
-    map_entry find{.key = key};
-
-    int index = 0;
-    int count = 0;
-    mapforeach(map, [&find, &index, &count](Var k, Var v, int first) -> int {
-        count++;
-        map_entry next{.key = k};
-
-        if(!map_compare(&find, &next, nullptr)) {
-            index = count;
-            return 1;
-        }
-
+    if(maplength(map) == 0) {
+        free_var(key);
         return 0;
+    }
+
+    Var map_keys = mapkeys(map);
+    if(map_keys.length() > 0)
+        return ismember(key, map_keys, 0);
+
+    map_entry next;
+    map_entry find{.key = key};
+    int index = mapforeach(map, [&next, &find](Var k, Var v, int index) -> int {
+        next.key = k;
+        return !map_compare(&next, &find, nullptr) ? index : 0;
     });
 
     free_var(key);
@@ -388,24 +471,21 @@ mapkeyindex(Var map, Var key)
 Var
 maprange(Var map, int from, int to)
 {   /* consumes `map' */
-    Var r;
-
     if(to > maplength(map) || from <= 0 || from > to) {
-        r.type = TYPE_ERR;
-        r.v.err = E_RANGE;
-        return r;
+        free_var(map);
+        map = Var::new_err(E_RANGE);
+    } else {
+        Var _new = new_map(to - from + 1);
+        mapforeach(map, [&_new, &from, &to](Var key, Var value, int index) -> int {
+            if(index >= from && index <= to)
+                mapinsert(_new, var_ref(key), var_ref(value));
+            return index <= to ? 0 : 1;
+        });
+        free_var(map);
+        map = _new;
     }
 
-    r = new_map(to - from + 1);
-    auto count = 0;
-    mapforeach(map, [&r, &from, &to, &count](Var key, Var value, int first) -> int {
-        if(++count >= from && count <= to)
-            mapinsert(r, var_ref(key), var_ref(value));
-        return 0;
-    });
-
-    free_var(map);
-    return r;
+    return map;
 }
 
 const map_entry*
@@ -428,13 +508,14 @@ mapat(Var map, Var key)
     map_entry *found;
     map_entry find{.key = key};
     
-    if((found = (map_entry*)hashmap_get(map.v.map, &find)) != nullptr) {
+    if((found = (map_entry*)maplookup(map, key, nullptr, 0)) != nullptr) {
         return found->value;
     } else {
         Var r;
         r.type = TYPE_CLEAR;
         find.value = r;
-        (map_entry*)hashmap_set(map.v.map, &find);
+        hashmap_set(map.v.map, &find);
+        mapkeyadd(map, key);
         hashmap_set_dirty(map.v.map, true);
 
         #ifdef MEMO_SIZE
@@ -467,41 +548,33 @@ maprangeset(Var map, int from, int to, Var value, Var *_new)
         return E_RANGE;
 
     Var r = new_map(maplength(map) + maplength(value) - (to - from) + 1);
-    size_t cnt = 0;
 
-    mapforeach(map, [&cnt, &r, &from, &to](Var key, Var value, int first) -> int {
-        if(++cnt < from || cnt > to)
-            r = mapinsert(r, key, value);
-        return 0;
+    mapforeach(map, [&r, &from](Var key, Var value, int index) -> int {
+        int before = (index < from) ? 1 : 0;
+        if(before) r = mapinsert(r, key, value);
+        return before;
     });
 
-    mapforeach(value, [&r](Var key, Var value, int first) -> int {
+    mapforeach(value, [&r](Var key, Var value, int index) -> int {
         r = mapinsert(r, key, value);
         return 0;
     });
 
+    mapforeach(map, [&r, &to](Var key, Var value, int index) -> int {
+        if(index > to) r = mapinsert(r, key, value);
+        return 0;
+    });
+
+    free_var(*_new);
     *_new = r;
+
     return E_NONE;
 }
 
-map_entry *mapdelete(Var map, Var key)
+inline bool
+maphaskey(Var map, Var key)
 {
-    map_entry *old_entry;
-    map_entry find{.key = key};
-
-    if((old_entry = (map_entry*)hashmap_delete(map.v.map, (const void*)&find)) != NULL) {
-        #ifdef MEMO_SIZE
-            var_metadata *metadata = ((var_metadata*)map.v.map) - 1;
-            metadata->size -= static_cast<uint32_t>((value_bytes(old_entry->key) + value_bytes(old_entry->value)));
-        #endif
-    }
-
-    return old_entry;
-}
-
-bool maphaskey(Var map, Var key) {
-    map_entry find{.key = key};
-    return (hashmap_get(map.v.map, &find) != nullptr);
+    return (maplookup(map, key, nullptr, 0) != nullptr);
 }
 
 /**** built in functions ****/
@@ -514,7 +587,7 @@ bf_mapdelete(Var arglist, Byte next, void *vdata, Objid progr)
     if (key.is_collection()) {
         free_var(arglist);
         return make_error_pack(E_TYPE);
-    } else if(mapdelete(map, key) == NULL) {
+    } else if(!mapdelete(map, key)) {
         free_var(map);
         free_var(arglist);
         return make_error_pack(E_RANGE);
@@ -528,16 +601,27 @@ static package
 bf_mapkeys(Var arglist, Byte next, void *vdata, Objid progr)
 {
     Var map = arglist[1];
-    Var r = new_list(maplength(map));
+    auto len = maplength(map);
 
-    auto count = 0;
-    mapforeach(map, [&r, &count](Var key, Var value, int first) -> int {
-        r[++count] = var_ref(key);
+    if(len == 0) {
+        free_var(arglist);
+        return make_var_pack(new_list(0));
+    }
+
+    Var map_keys = mapkeys(map);
+    if(map_keys.length() > 0) {
+        free_var(arglist);
+        return make_var_pack(var_ref(map_keys));
+    }
+
+    map_keys = new_list(maplength(map));
+    mapforeach(map, [&map_keys](Var key, Var value, int index) -> int {
+        map_keys[index] = var_ref(key);
         return 0;
     });
 
     free_var(arglist);
-    return make_var_pack(r);
+    return make_var_pack(map_keys);
 }
 
 static package
@@ -545,35 +629,34 @@ bf_mapvalues(Var arglist, Byte next, void *vdata, Objid progr)
 {
     const auto nargs = arglist.length();
     Var map = arglist[1];
-    Var r;
+    Var values;
 
     //nargs==1: simple mapvalues, dump all values of the map.
     if (nargs == 1) {
-        r = new_list(maplength(map));
+        values = new_list(maplength(map));
 
-        auto count = 0;
-        mapforeach(map, [&r, &count](Var key, Var value, int first) -> int {
-            r[++count] = var_ref(value);
+        mapforeach(map, [&values](Var key, Var value, int index) -> int {
+            values[index] = var_ref(value);
             return 0;
         });
 
         free_var(arglist);
-        return make_var_pack(r);
+        return make_var_pack(values);
     }
 
-    r = new_list(nargs - 1);
+    values = new_list(nargs - 1);
     for (int i = 1; i < nargs; ++i) {
         if(const map_entry *entry = maplookup(map, arglist[i+1], nullptr, true)) {
-            r[i] = var_ref(entry->value);
+            values[i] = var_ref(entry->value);
         } else {
-            free_var(r);
+            free_var(values);
             free_var(arglist);
             return make_error_pack(E_RANGE);
         }
     }
 
     free_var(arglist);
-    return make_var_pack(r);
+    return make_var_pack(values);
 }
 
 static package
@@ -585,14 +668,11 @@ bf_maphaskey(Var arglist, Byte next, void *vdata, Objid progr)
         return make_error_pack(E_TYPE);
     }
 
+    Var map = arglist[1];
     bool case_matters = arglist.length() >= 3 && is_true(arglist[3]);
 
-    Var map = arglist[1];
-
-    Var ret = Var::new_bool(maphaskey(map, key));
-
     free_var(arglist);
-    return make_var_pack(ret);
+    return make_var_pack(Var::new_bool(maphaskey(map, key)));
 }
 
 void

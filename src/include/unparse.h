@@ -41,5 +41,6 @@ extern const char *unparse_error(enum error);	/* E_NONE -> "No error" */
 
 extern int parse_error(const char *error);	/* "E_NONE" -> E_NONE */
 extern const char* parse_type(var_type);
+extern const char* parse_type_multi(var_type);
 
 #endif

@@ -24,6 +24,7 @@
 #include <string>
 #include <cmath>
 #include <limits>
+#include <vector>
 
 #include "config.h"
 #include "storage.h"
@@ -231,8 +232,9 @@ struct Var {
   // Default constructor
   Var();
 
-  // Copy constructor
+  // Copy constructors
   Var(const Var& other);
+  Var(const std::vector<Var>& other);
 
   // Bracket operators
   Var& operator[](Num i);
@@ -368,6 +370,14 @@ struct Var {
     return v;
   }
 
+  static Var new_string(const char* string) noexcept
+  {
+    Var v;
+    v.type = TYPE_STR;
+    v.v.str = str_dup(string);
+    return v;
+  }
+
   static inline Var new_err(enum error e) {
     Var v;
     v.type = TYPE_ERR;
@@ -395,6 +405,11 @@ struct Var {
   inline Var& __index(Num i);
   inline bool contains(Var key) const;
   Num length() const;
+
+  std::size_t hash() const;
+
+  operator std::vector<Var>() const;
+  operator std::string() const;
 };
 
 inline Var
