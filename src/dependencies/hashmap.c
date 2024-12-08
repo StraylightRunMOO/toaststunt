@@ -456,6 +456,15 @@ inline bool hashmap_set_dirty(struct hashmap *map, bool dirty) {
     return map->dirty;
 }
 
+inline void *hashmap_get_udata(struct hashmap *map) {
+    return map->udata;
+}
+
+inline void *hashmap_set_udata(struct hashmap *map, void *udata) {
+    map->udata = udata;
+    return map->udata;
+}
+
 // hashmap_scan iterates over all items in the hash map
 // Param `iter` can return false to stop iteration early.
 // Returns false if the iteration has been stopped early.

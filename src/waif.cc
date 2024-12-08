@@ -253,7 +253,7 @@ refers_to(Var target, Var key, bool waif_self_check)
         case TYPE_STR:
             return target.v.str == key.v.str;
         case TYPE_MAP:
-            return mapforeach(target, [&key](Var k, Var v, int first) -> int {
+            return mapforeach(target, [&key](Var k, Var v, int index) -> int {
                 return refers_to(k, key, true) || refers_to(v, key, true);
             });
     }

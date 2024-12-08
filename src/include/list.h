@@ -50,8 +50,7 @@ extern Var strget(Var str, int i);
 
 extern const char *value2str(Var);
 extern void unparse_value(Stream *, Var);
-extern Var toliteral(Var);
-extern std::string toliteralc(Var);
+extern std::string toliteral(Var);
 
 /*
  * Returns the length of the given list `l'.  Does *not* check to

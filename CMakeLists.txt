@@ -179,7 +179,8 @@ set(src_CSRCS
     src/regexpr.c
     src/dependencies/rpmalloc/rpmalloc.c
     src/dependencies/sosemanuk.c
-    src/dependencies/strnatcmp.c)
+    src/dependencies/strnatcmp.c
+    src/dependencies/xxhash.c)
 
 if(PCRE_FOUND)
     list(APPEND src_CSRCS src/dependencies/pcrs.c)
@@ -236,6 +237,7 @@ set(src_CXXSRCS
     src/property.cc
     src/quota.cc
     src/structures.cc
+    src/set.cc
     src/server.cc
     src/storage.cc
     src/streams.cc

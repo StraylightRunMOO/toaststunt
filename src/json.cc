@@ -453,7 +453,7 @@ generate(yajl_gen g, Var v, void *ctx)
             dmc.status = yajl_gen_status_ok;
             yajl_gen_map_open(g);
 
-            if (mapforeach(v, [&dmc](Var key, Var value, int first) -> int {
+            if (mapforeach(v, [&dmc](Var key, Var value, int index) -> int {
                dmc.status = generate_key(dmc.g, key, dmc.gctx);
                if (yajl_gen_status_ok != dmc.status)
                    return 1;
@@ -476,7 +476,7 @@ generate(yajl_gen g, Var v, void *ctx)
             dmc.status = yajl_gen_status_ok;
             yajl_gen_array_open(g);
 
-            if (listforeach(v, [&dmc](Var value, int first) -> int {
+            if (listforeach(v, [&dmc](Var value, int index) -> int {
                 dmc.status = generate(dmc.g, value, dmc.gctx);
                 return (dmc.status == yajl_gen_status_ok) ? 0 : 1;
             })) return dmc.status;

@@ -571,6 +571,7 @@
  * The default maximum number of seconds a curl() transfer can last.
 */
 
+#define MAP_SAVE_INSERTION_ORDER_DEFAULT 1
 #define MAP_HASH_SEED0 1099511627776
 #define MAP_HASH_SEED1 549755813881
 #define MAP_HASH_FUNCTION hashmap_sip
@@ -578,6 +579,10 @@
 /*****************************************************************************
  ********** You shouldn't need to change anything below this point. **********
  *****************************************************************************/
+
+#ifndef MAP_SAVE_INSERTION_ORDER_DEFAULT
+#define MAP_SAVE_INSERTION_ORDER_DEFAULT 0
+#endif
 
 #ifndef PLAYER_HUH
 #define PLAYER_HUH 0

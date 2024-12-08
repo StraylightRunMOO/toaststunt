@@ -58,6 +58,7 @@ static registry bi_function_registries[] =
     register_numbers,
     register_objects,
     register_property,
+    register_set,
     register_server,
     register_tasks,
     register_verbs,
@@ -263,10 +264,7 @@ call_bi_func(unsigned n, Var arglist, Byte func_pc,
             var_type proto = f->prototype[k];
             var_type arg = args[k + 1].type;
 
-            if (!(proto == TYPE_ANY
-                    || (proto == TYPE_NUMERIC && (arg == TYPE_INT
-                                                  || arg == TYPE_FLOAT))
-                    || proto == arg)) {
+            if (!(proto == arg || proto == TYPE_ANY || (proto == TYPE_NUMERIC && (arg == TYPE_INT || arg == TYPE_FLOAT)))) {
                 free_var(arglist);
 
                 stream_printf(error_msg, "%s (args[%i] of %s() expected %s; got %s)",

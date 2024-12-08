@@ -360,7 +360,7 @@ dbio_write_var(Var v)
             break;
         case TYPE_MAP:
             dbio_write_num(maplength(v));
-            mapforeach(v, [](Var key, Var value, int first) -> int {
+            mapforeach(v, [](Var key, Var value, int index) -> int {
                dbio_write_var(key);
                dbio_write_var(value);
                return 0;

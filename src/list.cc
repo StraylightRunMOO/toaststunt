@@ -41,6 +41,8 @@
 #include "server.h"
 #include "background.h"   // Threads
 #include "random.h"
+#include "db_private.h"
+#include "db.h"
 
 #include "dependencies/strnatcmp.c" // natural sorting
 
@@ -57,6 +59,10 @@ empty_list()
         emptylist.type = TYPE_LIST;
         emptylist.v.list = ptr;
         emptylist.v.list[0] = Var::new_int(0);
+
+        #ifdef ENABLE_GC
+            gc_set_color(emptylist.v.list, GC_GREEN);
+        #endif
     }
     
     return emptylist;
@@ -71,7 +77,7 @@ new_list(int size)
         list = var_ref(empty_list());
         
         #ifdef ENABLE_GC
-                assert(gc_get_color(list.v.list) == GC_GREEN);
+            assert(gc_get_color(list.v.list) == GC_GREEN);
         #endif
 
         return list;
@@ -85,7 +91,6 @@ new_list(int size)
     list.v.list = ptr;
     list.v.list[0] = Var::new_int(size);
 
-
     if(size > 1) {
         Var z = Var::new_int(0);
         std::fill(std::addressof(list[1]), std::addressof(list[size])+1, z);
@@ -97,7 +102,8 @@ new_list(int size)
     #endif
 
     #ifdef ENABLE_GC
-        gc_set_color(list.v.list, GC_YELLOW);
+        if (list.length() > 0)   /* only non-empty lists */
+            gc_set_color(list.v.list, GC_YELLOW);
     #endif
 
     return list;
@@ -117,6 +123,7 @@ destroy_list(Var list)
     for (i = list.length(), pv = list.v.list + 1; i > 0; i--, pv++)
         free_var(*pv);
 
+    // if((*pv).type != TYPE_ANON && (*pv).type != TYPE_STR) 
     /* Since this list could possibly be the root of a cycle, final
      * destruction is handled in the garbage collector if garbage
      * collection is enabled.
@@ -142,7 +149,8 @@ list_dup(Var list)
     #endif
 
     #ifdef ENABLE_GC
-        gc_set_color(_new.v.list, gc_get_color(list.v.list));
+        if (_new.length() > 0)   /* only non-empty lists */
+            gc_set_color(_new.v.list, gc_get_color(list.v.list));
     #endif
 
     return _new;
@@ -154,10 +162,8 @@ listforeach(Var list, list_callback func)
     auto len = list.length();
 
     int ret;
-    int first = 1;
     for (auto i = 1; i <= len; i++) {
-        if ((ret = func(list[i], first))) return ret;
-        first = 0;
+        if ((ret = func(list[i], i))) return ret;
     }
 
     return 0;
@@ -204,10 +210,17 @@ listset(Var list, Var value, int pos)
     _new[pos] = value;
 
     #ifdef ENABLE_GC
-        gc_set_color(_new.v.list, GC_YELLOW);
+        if(_new.length() > 0) /* only non-empty list */
+            gc_set_color(_new.v.list, GC_YELLOW);
     #endif
 
     return _new;
+}
+
+static Var
+listreserve(Var list, int size) {
+    list.v.list = (Var *) myrealloc(list.v.list, (next_power_of_two(size)) * sizeof(Var), M_LIST);
+    return list;
 }
 
 static Var
@@ -229,7 +242,8 @@ doinsert(Var list, Var value, int pos)
         #endif
 
         #ifdef ENABLE_GC
-            gc_set_color(list.v.list, GC_YELLOW);
+            if(_new.length() > 0) /* only non-empty list */
+                gc_set_color(list.v.list, GC_YELLOW);
         #endif
 
         return list;
@@ -237,29 +251,30 @@ doinsert(Var list, Var value, int pos)
 
     _new = new_list(size);
     
-    for (int i = 1; i < pos; i++)
-        _new[i] = var_ref(list[i]);
+    if(size > 1)
+        for (int i = 1; i < pos; i++)
+            _new[i] = var_ref(list[i]);
     
     _new[pos] = value;
     
-    for (int i = pos; i <= list.length(); i++)
-        _new[i + 1] = var_ref(list[i]);
+    if(size > pos)
+        for (int i = pos; i <= list.length(); i++)
+            _new[i + 1] = var_ref(list[i]);
 
     #ifdef MEMO_SIZE
         var_metadata *metadata_old = ((var_metadata*)list.v.list) - 1;
         var_metadata *metadata_new = ((var_metadata*)_new.v.list) - 1;
 
         int old_size = metadata_old->size;
-        int vbl = value_bytes(list);
-        int vbv = value_bytes(value);
 
-        metadata_new->size = 0; //+= value_bytes(list) + value_bytes(value);
+        metadata_new->size += value_bytes(list) + value_bytes(value);
     #endif
 
     free_var(list);
 
     #ifdef ENABLE_GC
-        gc_set_color(_new.v.list, GC_YELLOW);
+        if(_new.length() > 0) /* only non-empty list */
+            gc_set_color(_new.v.list, GC_YELLOW);
     #endif
 
     return _new;
@@ -313,22 +328,24 @@ listdelete(Var list, int pos)
     return _new;
 }
 
-Var
-listconcat(Var first, Var second)
-{
-    int lfirst  = first.length();
-    int lsecond = second.length();
+Var 
+listconcat(Var first, Var second) {
+    int len1 = first.length();
+    int len2 = second.length();
 
-    int i;
-    Var _new;
+    if(len1 == 0 && len2 == 0)
+        return first;
+    else if(len1 == 0)
+        return second;
+    else if(len2 == 0) 
+        return first;
     
-    _new = new_list(lsecond + lfirst);
-    
-    for (i = 1; i <= lfirst; i++)
-        _new[i] = var_ref(first[i]);
-    
-    for (i = 1; i <= lsecond; i++)
-        _new[i + lfirst] = var_ref(second[i]);
+    int len = len1 + len2;
+
+    if(len == 0)
+        return new_list(0);
+
+    Var _new = new_list(len);
 
     #ifdef MEMO_SIZE
         var_metadata *metadata_new    = ((var_metadata*)_new.v.list) - 1;
@@ -338,13 +355,21 @@ listconcat(Var first, Var second)
         metadata_new->size = metadata_first->size + metadata_second->size;
     #endif
 
+    _new[(Num)0] = Var::new_int(len);
+    if(len1 > 0) memcpy(&_new[1], &first[1], len1 * sizeof(Var));
+    if(len2 > 0) memcpy(&_new[len1 + 1], &second[1], len2 * sizeof(Var));
+
+    // This seems like it shouldn't be necessary because 
+    // the refs we add here should immediately be decremented
+    // by freeing first/second. But without it, there's a 
+    // memory corruption when freeing the ANON object which
+    // manages the MCP session in ToastCore. Have to leave
+    // this in until we figure it out...
+    for(auto i=1; i<=len; i++)
+        _new[i] = var_ref(_new[i]);
+
     free_var(first);
     free_var(second);
-
-    #ifdef ENABLE_GC
-        if (lsecond + lfirst > 0)   /* only non-empty lists */
-            gc_set_color(_new.v.list, GC_YELLOW);
-    #endif
 
     return _new;
 }
@@ -393,10 +418,10 @@ listrangeset(Var base, int from, int to, Var value)
     free_var(base);
     free_var(value);
 
-#ifdef ENABLE_GC
-    if (newsize > 0)    /* only non-empty lists */
-        gc_set_color(ans.v.list, GC_YELLOW);
-#endif
+    #ifdef ENABLE_GC
+        if (newsize > 0)    /* only non-empty lists */
+            gc_set_color(ans.v.list, GC_YELLOW);
+    #endif
 
     return ans;
 }
@@ -404,24 +429,28 @@ listrangeset(Var base, int from, int to, Var value)
 Var
 sublist(Var list, int lower, int upper)
 {
+    auto len = list.length();
+    if(len == 0)
+        return list;
+
     Var r;
     int i;
 
     if(lower < 0)
-        lower = lower + list.length();
+        lower = lower + len;
 
     if(upper < 0)
-        upper = upper + list.length();
+        upper = upper + len;
 
-    if (lower > upper && lower <= list.length() && upper > 0) {
+    if (lower > upper && lower <= len && upper > 0) {
         r = new_list(lower - upper + 1);
         for (i = lower; i >= upper; i--)
             r.v.list[lower - i + 1] = var_ref(list.v.list[i]);
-    } else if(upper > lower && upper <= list.length() && lower > 0) {
+    } else if(upper > lower && upper <= len && lower > 0) {
         r = new_list(upper - lower + 1);
         for (i = lower; i <= upper; i++)
             r.v.list[i - lower + 1] = var_ref(list.v.list[i]);
-    } else if(upper == lower && upper <= list.length() && lower > 0) {
+    } else if(upper == lower && upper <= len && lower > 0) {
         r = new_list(1);
         r.v.list[1] = var_ref(list.v.list[lower]);
     } else {
@@ -430,9 +459,10 @@ sublist(Var list, int lower, int upper)
 
     free_var(list);
 
-#ifdef ENABLE_GC
-        gc_set_color(r.v.list, GC_YELLOW);
-#endif
+    #ifdef ENABLE_GC
+        if(r.length() > 0)
+            gc_set_color(r.v.list, GC_YELLOW);
+    #endif
 
     return r;
 }
@@ -567,9 +597,8 @@ unparse_value(Stream * s, Var v)
         case TYPE_MAP:
         {
             stream_add_char(s, '[');
-            mapforeach(v, [&s](Var key, Var value, int first) -> int {
-               if (!first) stream_add_string(s, ", ");
-
+            mapforeach(v, [&s](Var key, Var value, int index) -> int {
+               if (index > 1) stream_add_string(s, ", ");
                unparse_value(s, key);
                stream_add_string(s, " -> ");
                unparse_value(s, value);
@@ -601,27 +630,7 @@ unparse_value(Stream * s, Var v)
     }
 }
 
-Var 
-toliteral(Var args)
-{
-    Var r;
-    Stream *s = new_stream(100);
-
-    try {
-        unparse_value(s, args);
-        r.type = TYPE_STR;
-        r.v.str = str_dup(stream_contents(s));
-    }
-    catch (stream_too_big& exception) {
-        r.type = TYPE_ERR;
-        r.v.err = E_QUOTA;
-    }
-
-    free_stream(s);
-    return r;
-}
-
-std::string toliteralc(Var args)
+std::string toliteral(Var args)
 {
     Stream *s = new_stream(100);
 
@@ -1039,7 +1048,8 @@ bf_slice(Var arglist, Byte next, void *vdata, Objid progr)
 
 /* Sorts various MOO types using std::sort.
  * Args: LIST <values to sort>, [LIST <values to sort by>], [INT <natural sort ordering?>], [INT <reverse?>] */
-void sort_callback(Var arglist, Var *ret, void *extra_data)
+void
+sort_callback(Var arglist, Var *ret, void *extra_data)
 {
     const int nargs = arglist.length();
     const int list_to_sort = (nargs >= 2 && arglist[2].length() > 0 ? 2 : 1);
@@ -1119,14 +1129,15 @@ bf_sort(Var arglist, Byte next, void *vdata, Objid progr)
     return background_thread(sort_callback, &arglist);
 }
 
-void all_members_thread_callback(Var arglist, Var *ret, void *extra_data)
+void 
+all_members_thread_callback(Var arglist, Var *ret, void *extra_data)
 {
     *ret = new_list(0);
     Var data = arglist[1];
-    Var *thelist = arglist[2].v.list;
+    Var list = arglist[2];
 
     for (int x = 1, list_size = arglist[2].length(); x <= list_size; x++)
-        if (equality(data, thelist[x], 0))
+        if (equality(data, list[x], 0))
             *ret = listappend(*ret, Var::new_int(x));
 }
 
@@ -1846,22 +1857,6 @@ bf_parse_ansi(Var arglist, Byte next, void *vdata, Objid progr)
 #undef ANSI_TAG_TO_CODE
 }
 
-
-static package
-bf_list_test(Var arglist, Byte next, void *vdata, Objid progr)
-{
-    auto nargs = arglist.length();
-    Var list = arglist[1];
-    var_metadata *metadata = ((var_metadata*)list.v.list) - 1;
-    if(nargs > 1) metadata->size = static_cast<uint32_t>(arglist[2].v.num);
-
-    Var r;
-    r = Var::new_int(metadata->size);
-
-    free_var(arglist);
-    return make_var_pack(r);
-}
-
 static package
 bf_remove_ansi(Var arglist, Byte next, void *vdata, Objid progr)
 {
@@ -1942,7 +1937,7 @@ register_list(void)
     register_function("all_members", 2, 2, bf_all_members, TYPE_ANY, TYPE_LIST);
     register_function("range", 2, 4, bf_range, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_BOOL);
     register_function("shuffle", 1, 2, bf_shuffle, TYPE_LIST, TYPE_INT);
-    
+
     /* string */
     register_function("tostr", 0, -1, bf_tostr);
     register_function("toliteral", 1, 1, bf_toliteral, TYPE_ANY);
@@ -1957,8 +1952,4 @@ register_list(void)
     register_function("strtr", 3, 4, bf_strtr, TYPE_STR, TYPE_STR, TYPE_STR, TYPE_ANY);
     register_function("parse_ansi", 1, 1, bf_parse_ansi, TYPE_STR);
     register_function("remove_ansi", 1, 1, bf_remove_ansi, TYPE_STR);
-
-
-    register_function("list_test", 1, 2, bf_list_test, TYPE_LIST, TYPE_INT);
-
 }

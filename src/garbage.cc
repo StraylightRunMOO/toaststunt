@@ -183,12 +183,12 @@ for_all_children(Var v, gc_func *fp)
     if (v.is_object())
         db_for_all_propvals(v, do_obj, (void *)fp);
     else if (TYPE_LIST == v.type)
-        listforeach(v, [&fp, &v](Var value, int first) -> int {
+        listforeach(v, [&fp, &v](Var value, int index) -> int {
             if (value.is_collection() && is_not_green(value)) (*fp)(v);
             return 0;
         });
     else if (TYPE_MAP == v.type)
-        mapforeach(v, [&fp, &v](Var key, Var value, int first) -> int {
+        mapforeach(v, [&fp, &v](Var key, Var value, int index) -> int {
             if (value.is_collection() && is_not_green(value))  (*fp)(v);
             return 0;
         });
