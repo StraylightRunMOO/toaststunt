@@ -49,7 +49,7 @@ static const char *header_format_string
     = "** LambdaMOO Database, Format Version %u **\n";
 
 DB_Version dbio_input_version;
-
+
 
 /*********** Format version 4 support ***********/
 
@@ -166,11 +166,30 @@ dbv4_count_properties(Objid oid)
 
 /*********** Verb and property I/O ***********/
 
+static inline Var
+only_valid(Var objects)
+{
+    if(objects.type != TYPE_LIST)
+        objects = enlist_var(objects);
+
+    listforeach(objects, [&objects](Var value, int index) -> int {
+        if(value.type != TYPE_OBJ || !valid(value.obj()))
+            objects = listdelete(objects, index);
+        return 0;
+    });
+
+    return objects;
+}
+
 static void
 read_verbdef(Verbdef * v)
 {
     v->name = dbio_read_string_intern();
     v->owner = dbio_read_objid();
+
+    if (dbio_input_version >= DBV_18)
+        v->meta = dbio_read_var();
+
     v->perms = dbio_read_num();
     v->prep = dbio_read_num();
     v->next = nullptr;
@@ -180,8 +199,12 @@ read_verbdef(Verbdef * v)
 static void
 write_verbdef(Verbdef * v)
 {
+    if(v->meta.type != TYPE_MAP)
+        v->meta = new_map(0);
+
     dbio_write_string(v->name);
     dbio_write_objid(v->owner);
+    dbio_write_var(v->meta);
     dbio_write_num(v->perms);
     dbio_write_num(v->prep);
 }
@@ -603,11 +626,14 @@ ng_validate_hierarchies()
         Object *o = dbpriv_find_object(oid);
         MAYBE_LOG_PROGRESS;
         if (o) {
+            o->parents = only_valid(var_ref(o->parents));
             if (!is_obj_or_list_of_objs(o->parents)) {
                 errlog("VALIDATE: #%" PRIdN ".parents is not an object or list of objects.\n",
                        oid);
                 broken = 1;
             }
+
+            o->children = only_valid(var_ref(o->children));
             if (!is_list_of_objs(o->children)) {
                 errlog("VALIDATE: #%" PRIdN ".children is not a list of objects.\n",
                        oid);
@@ -618,6 +644,8 @@ ng_validate_hierarchies()
                        oid);
                 broken = 1;
             }
+
+            o->contents = only_valid(o->contents);
             if (!is_list_of_objs(o->contents)) {
                 errlog("VALIDATE: #%" PRIdN ".contents is not a list of objects.\n",
                        oid);
@@ -1008,11 +1036,13 @@ read_db_file(void)
 
     /* see db_objects.c */
     dbpriv_after_load();
+    if(dbio_input_version < DBV_18)
+        dbpriv_fix_props_for_bmi(dbio_input_version, DBV_18);
+
     waif_after_loading();
 
     return 1;
 }
-
 
 /*********** File-level Output ***********/
 

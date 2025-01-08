@@ -15,10 +15,17 @@
     Pavel@Xerox.Com
  *****************************************************************************/
 
+
+#ifndef EXT_NUMBERS_H
+#define EXT_NUMBERS_H 1
+
 #include <random>
+#include <fstream>
 
 #include "sosemanuk.h"
 #include "structures.h"
+#include "log.h"
+#include "../dependencies/xxhash.h"
 
 extern int parse_number(const char *str, Num *result, int try_floating_point);
 extern enum error become_integer(Var, Num *, int);
@@ -37,15 +44,21 @@ extern Var do_power(Var, Var);
 extern sosemanuk_key_context key_context;
 extern sosemanuk_run_context run_context;
 
+
+static size_t sysrandom(void* dst, size_t dstlen)
+{
+    char* buffer = reinterpret_cast<char*>(dst);
+    std::ifstream stream("/dev/urandom", std::ios_base::binary | std::ios_base::in);
+    stream.read(buffer, dstlen);
+    return dstlen;
+}
+
 struct splitmix64 {
   using result_type = uint64_t;
 
-  splitmix64() {
-    std::random_device rd;
-    state = rd();
-  }
+  splitmix64() { sysrandom(&state, sizeof(result_type)); }
+  splitmix64(result_type s) : state(static_cast<result_type>(XXH64(&s, sizeof(result_type), UINT64_C(0x1ffffffddad23000)))) {}
 
-  splitmix64(result_type s) : state(s) {}
   static constexpr result_type min() { return 0; }
   static constexpr result_type max() { return 0xFFFFFFFFFFFFFFFF; }
   result_type operator()() {
@@ -59,3 +72,13 @@ struct splitmix64 {
 };
 
 extern splitmix64 new_splitmix64(uint64_t);
+
+inline bool 
+is_round(double num) 
+{
+    double integral;
+    double fractional = std::modf(num, &integral);
+    return std::fabs(fractional) < EPSILON;
+}
+
+#endif

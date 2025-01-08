@@ -38,19 +38,31 @@ extern Var setadd(Var list, Var value);
 extern Var setremove(Var list, Var value);
 extern Var sublist(Var list, int lower, int upper);
 extern int listequal(Var lhs, Var rhs, int case_matters);
-
 extern int list_sizeof(Var *list);
 
 typedef std::function<int(Var, int)> list_callback;
 extern int listforeach(Var list, list_callback func);
 
+extern Var set_intersection(Var s1, Var s2, bool count_dup);
+
 extern Var strrangeset(Var list, int from, int to, Var value);
 extern Var substr(Var str, int lower, int upper);
 extern Var strget(Var str, int i);
 
+extern Var corified_as(Var, int);
+
 extern const char *value2str(Var);
 extern void unparse_value(Stream *, Var);
 extern std::string toliteral(Var);
+
+extern const char* str_escape(const char*, int);
+extern const char* str_unescape(const char*, int);
+
+extern Var explode(Var s, char delim, bool mode);
+extern Var implode(Var src, Var sep);
+
+extern Var uppercase(Var s);
+extern Var lowercase(Var s);
 
 /*
  * Returns the length of the given list `l'.  Does *not* check to

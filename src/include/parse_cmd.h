@@ -35,6 +35,8 @@ typedef struct {
 
     const char *iobjstr;	/* indirect object string */
     Objid iobj;			/* indirect object */
+
+    const char *cmdstr; /* typed command */ 
 } Parsed_Command;
 
 extern char **parse_into_words(char *input, int *nwords);

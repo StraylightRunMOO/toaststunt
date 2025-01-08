@@ -67,8 +67,7 @@ static Var string_to_moo_type(char* str, bool parse_objects, bool sanitize_strin
     } else if (parse_number(str, &int_test, 0) == 1) {
         s.type = TYPE_INT;
         s.v.num = int_test;
-    } else if (parse_float(str, &double_test) == 1)
-    {
+    } else if (parse_float(str, &double_test) == 1) {
         s.type = TYPE_FLOAT;
         s.v.fnum = double_test;
     } else {

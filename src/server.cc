@@ -1935,6 +1935,7 @@ int
 main(int argc, char **argv)
 {
     alloc_init();
+
     this_program = str_dup(argv[0]);
     const char *log_file = nullptr;
     const char *script_file = nullptr;
@@ -2296,8 +2297,9 @@ main(int argc, char **argv)
     }
     free_var(desc);
     // I doubt anybody will have enough listeners for this to be worthwhile, but why not.
+    // the shrink_to_fit() made lldb have kittens when attached to a LeakCheck build - TODO
     initial_ports.clear();
-    initial_ports.shrink_to_fit();
+    //initial_ports.shrink_to_fit();
 #ifdef USE_TLS
     initial_tls_ports.clear();
     initial_tls_ports.shrink_to_fit();
@@ -2534,14 +2536,9 @@ bf_usage(Var arglist, Byte next, void *vdata, Objid progr)
     if (!is_wizard(progr))
         return make_error_pack(E_PERM);
 
-    Var r = new_list(9);
     Var cpu = new_list(3);
 
-    // Setup all of our types ahead of time.
-    int x = 0;
-    for (x = 3; x <= r.length(); x++)
-        r[x].type = TYPE_INT;
-
+    int x;
     for (x = 1; x <= 3; x++)
         cpu[x] = Var::new_int(0); //initialize to all 0
 
@@ -2550,7 +2547,7 @@ bf_usage(Var arglist, Byte next, void *vdata, Objid progr)
     int info_ret = sysinfo(&sys_info);
 
     for (x = 0; x < 3; x++)
-        cpu[x + 1].v.num = (info_ret != 0 ? 0 : sys_info.loads[x]);
+        cpu[x + 1] = Var::new_int(info_ret != 0 ? 0 : sys_info.loads[x]);
 #else
     /*** Begin CPU load averages ***/
 #ifdef __MACH__
@@ -2567,17 +2564,16 @@ bf_usage(Var arglist, Byte next, void *vdata, Objid progr)
     struct rusage usage;
     getrusage(RUSAGE_SELF, &usage);
 
-    r[1].type = TYPE_FLOAT;
-    r[2].type = TYPE_FLOAT;
-    r[1].v.fnum = (double)usage.ru_utime.tv_sec + (double)usage.ru_utime.tv_usec / CLOCKS_PER_SEC;
-    r[2].v.fnum = (double)usage.ru_stime.tv_sec + (double)usage.ru_stime.tv_usec / CLOCKS_PER_SEC;
-    r[3].v.num = usage.ru_minflt;
-    r[4].v.num = usage.ru_majflt;
-    r[5].v.num = usage.ru_inblock;
-    r[6].v.num = usage.ru_oublock;
-    r[7].v.num = usage.ru_nvcsw;
-    r[8].v.num = usage.ru_nivcsw;
-    r[9].v.num = usage.ru_nsignals;
+    Var r = new_list(9);
+    r[1] = Var::new_float(static_cast<double>(usage.ru_utime.tv_sec) + static_cast<double>(usage.ru_utime.tv_usec) / CLOCKS_PER_SEC);
+    r[2] = Var::new_float(static_cast<double>(usage.ru_stime.tv_sec) + static_cast<double>(usage.ru_stime.tv_usec) / CLOCKS_PER_SEC);
+    r[3] = Var::new_int(usage.ru_minflt);
+    r[4] = Var::new_int(usage.ru_majflt);
+    r[5] = Var::new_int(usage.ru_inblock);
+    r[6] = Var::new_int(usage.ru_oublock);
+    r[7] = Var::new_int(usage.ru_nvcsw);
+    r[8] = Var::new_int(usage.ru_nivcsw);
+    r[9] = Var::new_int(usage.ru_nsignals);
 
     // Add in our load averages.
     r = listinsert(r, cpu, 1);
@@ -3052,13 +3048,13 @@ bf_connection_info(Var arglist, Byte next, void *vdata, Objid progr)
     }
 
     // Avoid some mallocs
-    static Var src_addr =   str_dup_to_var("source_address");
-    static Var src_ip =   str_dup_to_var("source_ip");
-    static Var src_port =   str_dup_to_var("source_port");
-    static Var dest_addr =  str_dup_to_var("destination_address");
-    static Var dest_ip =  str_dup_to_var("destination_ip");
-    static Var dest_port =  str_dup_to_var("destination_port");
-    static Var protocol =   str_dup_to_var("protocol");
+    static Var src_addr    = str_dup_to_var("source_address");
+    static Var src_ip      = str_dup_to_var("source_ip");
+    static Var src_port    = str_dup_to_var("source_port");
+    static Var dest_addr   = str_dup_to_var("destination_address");
+    static Var dest_ip     = str_dup_to_var("destination_ip");
+    static Var dest_port   = str_dup_to_var("destination_port");
+    static Var protocol    = str_dup_to_var("protocol");
     static Var is_outbound = str_dup_to_var("outbound");
 
     network_handle nh = h->nhandle;

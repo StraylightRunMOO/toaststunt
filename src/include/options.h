@@ -49,9 +49,9 @@
  * because it will lose track of cyclic data structures.
  */
 
-#define ENABLE_GC
+/* #define ENABLE_GC */
 
-#define GC_ROOTS_LIMIT 2000
+/* #define GC_ROOTS_LIMIT 2000 */
 
 /******************************************************************************
  * Enable/disable the custom allocator and set some basic options below.
@@ -59,10 +59,10 @@
  * can be found in /src/dependencies/rpmalloc.c
 */
 
-/* #define USE_RPMALLOC */
+#define USE_RPMALLOC
 
 #ifdef USE_RPMALLOC
-  #define ALLOC_PAGE_SIZE   4 * 1024 * 1024
+  #define ALLOC_PAGE_SIZE   0
   #define ALLOC_ENABLE_HUGE 1
 #endif 
 
@@ -196,7 +196,7 @@
  * KEEP_ALIVE_INTERVAL:: The time (in seconds) between keep-alive probes.
  * KEEP_ALIVE_COUNT:     The number of failed keep-alive probes before disconnecting.
  */
-#define KEEP_ALIVE_DEFAULT    false
+#define KEEP_ALIVE_DEFAULT    true
 #define KEEP_ALIVE_IDLE       300
 #define KEEP_ALIVE_INTERVAL   120
 #define KEEP_ALIVE_COUNT      5
@@ -402,7 +402,7 @@
  ******************************************************************************
  */
 
-/* #define PLAYER_HUH 1 */
+#define PLAYER_HUH 1
 
 /******************************************************************************
  * Configurable options for the Exec subsystem.  EXEC_SUBDIR is the
@@ -459,6 +459,7 @@
  * use in other applications is minimal, as the cache is invalidated often.
  ******************************************************************************
 */
+
 #define USE_ANCESTOR_CACHE
 
 /******************************************************************************

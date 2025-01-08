@@ -18,9 +18,7 @@
 #ifndef Storage_h
 #define Storage_h 1
 
-#include <string.h>
 #include <atomic>
-
 #include "options.h"
 
 #define IS_POWER_OF_TWO(v) (v & -v) == v
@@ -63,21 +61,21 @@ typedef struct var_metadata {
 #endif
 } var_metadata;
 
-static inline uint16_t
+static inline uint32_t
 addref(const void *ptr)
 {
     var_metadata *metadata = ((var_metadata*)ptr) - 1;
     return ++(metadata->refcount);
 }
 
-static inline uint16_t
+static inline uint32_t
 delref(const void *ptr)
 {
     var_metadata *metadata = ((var_metadata*)ptr) - 1;
     return --(metadata->refcount);
 }
 
-static inline uint16_t
+static inline uint32_t
 refcount(const void *ptr)
 {
     var_metadata *metadata = ((var_metadata*)ptr) - 1;
@@ -139,6 +137,8 @@ typedef enum Memory_Type {
     M_ANON, /* anonymous object */
 
     M_WAIF, M_WAIF_XTRA,
+
+    M_CALL, M_COMPLEX, M_MATRIX,
 
     /* to be used when no more specific type applies */
     M_STRUCT, M_ARRAY

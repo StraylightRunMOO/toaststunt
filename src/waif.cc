@@ -231,7 +231,7 @@ refers_to(Var target, Var key, bool waif_self_check)
     int i;
     Var *p;
 
-    switch ((int) target.type) {
+    switch (target.type) {
         case TYPE_LIST:
             if (target.v.list == key.v.list)
                 return 1;
@@ -834,9 +834,7 @@ waif_bytes(Waif *w)
      * be sharing that with the class object which is billed for that
      * space
      */
-    //len = sizeof(Waif);
     len = sizeof(*w);
-    oklog("SIZE OF *w: %d\n", len);
     cnt = count_waif_propvals(w);
     while (cnt--)
         len += value_bytes(w->propvals[cnt]);

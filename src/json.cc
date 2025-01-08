@@ -36,6 +36,7 @@
 #include "functions.h"
 #include "json.h"
 #include "list.h"
+#include "log.h"
 #include "map.h"
 #include "numbers.h"
 #include "server.h"
@@ -106,7 +107,7 @@ pop(struct stack_item **top)
 #define POP(top) pop(&(top))
 
 typedef enum {
-    MODE_COMMON_SUBSET, MODE_EMBEDDED_TYPES
+    MODE_COMMON_SUBSET, MODE_EMBEDDED_TYPES, MODE_INFERRED_TYPES
 } mode_type;
 
 struct parse_context {
@@ -242,6 +243,56 @@ handle_number(void *ctx, const char *numberVal, unsigned int numberLen, yajl_tok
     return 0;
 }
 
+static inline Var infer_type(const char *str, size_t len) {
+    if(len > 20) return str_dup_to_var(str);
+
+    if(len > 1 && str[0] == '#') {
+        auto i = 1;
+
+        if(str[i] == '-' && len > 2) i++;
+
+        while(i < len)
+            if(str[i] < '0' || str[i] > '9')
+                return str_dup_to_var(str);
+            else
+                i++;
+
+        Var result;
+        if(sscanf(str+1, "%lld", &(result.v.obj)) > 0)
+            result.type = TYPE_OBJ;
+        else
+            result = str_dup_to_var(str);
+
+        return result;
+    } else if(len > 2 && str[0]=='E' && str[1]=='_') {
+        int e = parse_error(str);
+
+        if(e >= 0) {
+            Var error;
+            error.type = TYPE_ERR;
+            error.v.err = (enum error)e;
+            return error;
+        }
+        
+        return str_dup_to_var(str);
+    }
+
+    for(auto i = 0; i < len; i++)
+        if((str[i] < '0' || str[i] > '9') && str[i] != '.' && str[i] != '-' && str[i] != 'e' && str[i] != '+')
+            return str_dup_to_var(str);
+
+    Var result;
+    if(strchr(str, '.') && sscanf(str, "%lf", &(result.v.fnum)) > 0) {
+        result.type = TYPE_FLOAT;
+    } else if(sscanf(str, "%lld", &(result.v.num)) > 0) {
+        result.type = TYPE_INT;
+    } else {
+        result = str_dup_to_var(str);
+    }
+
+    return result;
+}
+
 static int
 handle_string(void *ctx, const unsigned char *stringVal, unsigned int stringLen)
 {
@@ -249,11 +300,14 @@ handle_string(void *ctx, const unsigned char *stringVal, unsigned int stringLen)
     var_type type;
     Var v;
 
-    const char *val = (const char *)stringVal;
     size_t len = (size_t)stringLen;
+    char *val = (char*)mymalloc(len + 1, M_STRUCT);
+    strncpy(val, (const char*)stringVal, len);
+    val[len] = '\0';
 
-    if (MODE_EMBEDDED_TYPES == pctx->mode
-            && TYPE_NONE != (type = valid_type(&val, &len))) {
+    if(MODE_INFERRED_TYPES == pctx->mode) {
+        v = infer_type(val, len);
+    } else if (MODE_EMBEDDED_TYPES == pctx->mode && TYPE_NONE != (type = valid_type((const char**)&val, &len))) {
         switch (type) {
             case TYPE_OBJ:
             {
@@ -305,7 +359,10 @@ handle_string(void *ctx, const unsigned char *stringVal, unsigned int stringLen)
         temp[len] = '\0';
         v.type = TYPE_STR;
         v.v.str = str_dup(temp);
+        v = str_dup_to_var(val);
     }
+
+    myfree(val, M_STRUCT);
 
     PUSH(pctx->top, v);
     return 1;
@@ -520,7 +577,7 @@ bf_parse_json(Var arglist, Byte next, void *vdata, Objid progr)
     pctx.top = &pctx.stack;
     pctx.stack.v.type = TYPE_INT;
     pctx.stack.v.v.num = 0;
-    pctx.mode = MODE_COMMON_SUBSET;
+    pctx.mode = MODE_INFERRED_TYPES;
     pctx.depth = 0;
 
     const char *str = arglist[1].v.str;
@@ -530,8 +587,10 @@ bf_parse_json(Var arglist, Byte next, void *vdata, Objid progr)
 
     int done = 0;
 
-    if (1 < arglist.length()) {
-        if (!strcasecmp(arglist[2].v.str, "common-subset")) {
+    if (arglist.length() >= 2) {
+        if (!strcasecmp(arglist[2].v.str, "inferred-types")) {
+            pctx.mode = MODE_INFERRED_TYPES;
+        } else if (!strcasecmp(arglist[2].v.str, "common-subset")) {
             pctx.mode = MODE_COMMON_SUBSET;
         } else if (!strcasecmp(arglist[2].v.str, "embedded-types")) {
             pctx.mode = MODE_EMBEDDED_TYPES;
@@ -588,11 +647,10 @@ bf_generate_json(Var arglist, Byte next, void *vdata, Objid progr)
     unsigned int len;
 
     Var json;
-
     package pack;
 
-    if (1 < arglist.length()) {
-        if (!strcasecmp(arglist[2].v.str, "common-subset")) {
+    if (arglist.length() >= 2) {
+        if (!strcasecmp(arglist[2].v.str, "common-subset") || !strcasecmp(arglist[2].v.str, "inferred-types")) {
             gctx.mode = MODE_COMMON_SUBSET;
         } else if (!strcasecmp(arglist[2].v.str, "embedded-types")) {
             gctx.mode = MODE_EMBEDDED_TYPES;

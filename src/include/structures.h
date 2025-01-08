@@ -25,6 +25,7 @@
 #include <cmath>
 #include <limits>
 #include <vector>
+#include <complex>
 
 #include "config.h"
 #include "storage.h"
@@ -56,15 +57,18 @@ typedef uint64_t UNum;
 #define SERVER_BITS 64
 #endif
 typedef Num Objid;
-#define EPSILON std::numeric_limits<double>::epsilon()
+#define EPSILON   std::numeric_limits<double>::epsilon()
+#define EPSILON32 std::numeric_limits<float>::epsilon()
+typedef std::complex<float> complex_t;
+typedef std::reference_wrapper<complex_t> complex_ref;
 
 /*
- * Special Objid's
+ * Special Objids
  */
-#define SYSTEM_OBJECT	0
-#define NOTHING		-1
-#define AMBIGUOUS	-2
-#define FAILED_MATCH	-3
+#define SYSTEM_OBJECT  0
+#define NOTHING       -1
+#define AMBIGUOUS     -2
+#define FAILED_MATCH  -3
 
 /* Do not reorder or otherwise modify this list, except to add new elements at
  * the end, since the order here defines the numeric equivalents of the error
@@ -85,8 +89,9 @@ enum error {
  * extremely cheap (both in space and time) for simple types like oids
  * and ints.
  */
-#define TYPE_COMPLEX_FLAG	0x80
-#define TYPE_DB_MASK		0x7f
+
+#define TYPE_COMPLEX_FLAG 0x8000000
+#define TYPE_DB_MASK      0x7ffffff
 
 /* Do not reorder or otherwise modify this list, except to add new
  * elements at the end (see THE END), since the order here defines the
@@ -100,78 +105,39 @@ enum error {
  * PUSH_TYPE_MISMATCH call in the following places (terrible, I know):
  * execute.cc: OP_MAP_INSERT, OP_PUSH_REF, OP_RANGE_REF, EOP_RANGESET
  */
-typedef enum : uint8_t {
-    TYPE_INT, TYPE_OBJ, _TYPE_STR, TYPE_ERR, _TYPE_LIST, /* user-visible */
-    TYPE_CLEAR,			/* in clear properties' value slot */
-    TYPE_NONE,			/* in uninitialized MOO variables */
-    TYPE_CATCH,			/* on-stack marker for an exception handler */
-    TYPE_FINALLY,		/* on-stack marker for a TRY-FINALLY clause */
-    _TYPE_FLOAT,		/* floating-point number; user-visible */
-    _TYPE_MAP,			/* map; user-visible */
-    _TYPE_OBSOLETE,		/* formerly iterator - we may be able to re-use this */
-    _TYPE_ANON,			/* anonymous object; user-visible */
-    _TYPE_WAIF,         /* lightweight object; user-visible */
-    TYPE_BOOL,			/* Experimental boolean type */
+
+typedef enum : uint32_t {
+    _TYPE_TYPE    = 0,       /* meta type for holding var_type */
+    TYPE_INT      = 1 << 0,  /* user-visible */
+    TYPE_OBJ      = 1 << 1,
+    _TYPE_STR     = 1 << 2,
+    TYPE_ERR      = 1 << 3,
+    _TYPE_LIST    = 1 << 4,
+    TYPE_CLEAR    = 1 << 5,  /* in clear properties' value slot */
+    TYPE_NONE     = 1 << 6,  /* in uninitialized MOO variables */
+    TYPE_CATCH    = 1 << 7,  /* on-stack marker for an exception handler */
+    TYPE_FINALLY  = 1 << 8,  /* on-stack marker for a TRY-FINALLY clause */
+    TYPE_FLOAT    = 1 << 9,  /* floating-point number; user-visible */
+    _TYPE_MAP     = 1 << 10, /* map; user-visible */
+    _TYPE_CALL    = 1 << 11, /* verb call handle; user-visible */
+    _TYPE_ANON    = 1 << 12, /* anonymous object; user-visible */
+    _TYPE_WAIF    = 1 << 13, /* lightweight object; user-visible */
+    TYPE_BOOL     = 1 << 14, /* boolean type; user-visible */
+    TYPE_COMPLEX  = 1 << 15, /* complex number; user-visible */
+    _TYPE_MATRIX  = 1 << 16, /* matrix type; user-visible */
+
     /* THE END - complex aliases come next */
-    TYPE_STR = (_TYPE_STR | TYPE_COMPLEX_FLAG),
-    TYPE_FLOAT = (_TYPE_FLOAT),
-    TYPE_LIST = (_TYPE_LIST | TYPE_COMPLEX_FLAG),
-    TYPE_MAP = (_TYPE_MAP | TYPE_COMPLEX_FLAG),
-    TYPE_ANON = (_TYPE_ANON | TYPE_COMPLEX_FLAG),
-    TYPE_WAIF = (_TYPE_WAIF | TYPE_COMPLEX_FLAG),
+    TYPE_STR     = (_TYPE_STR     | TYPE_COMPLEX_FLAG),
+    TYPE_LIST    = (_TYPE_LIST    | TYPE_COMPLEX_FLAG),
+    TYPE_MAP     = (_TYPE_MAP     | TYPE_COMPLEX_FLAG),
+    TYPE_ANON    = (_TYPE_ANON    | TYPE_COMPLEX_FLAG),
+    TYPE_WAIF    = (_TYPE_WAIF    | TYPE_COMPLEX_FLAG),
+    TYPE_CALL    = (_TYPE_CALL    | TYPE_COMPLEX_FLAG),
+    TYPE_MATRIX  = (_TYPE_MATRIX  | TYPE_COMPLEX_FLAG),
 } var_type;
 
-static inline std::string get_type_name(var_type t) {
-  switch(t) {
-  case TYPE_INT:
-    return "INT";
-  case TYPE_OBJ:
-    return "OBJ";
-  case _TYPE_STR:
-    return "_STR";
-  case TYPE_ERR:
-    return "ERR";
-  case _TYPE_LIST:
-    return "_LIST";
-  case TYPE_CLEAR:
-    return "CLEAR";
-  case TYPE_NONE:
-    return "NONE";
-  case TYPE_CATCH:
-    return "CATCH";
-  case TYPE_FINALLY:
-    return "FINALLY";
-  case _TYPE_MAP:
-    return "_MAP";
-  case _TYPE_OBSOLETE:
-    return "_OBSOLETE";
-  case _TYPE_ANON:
-    return "_ANON";
-  case _TYPE_WAIF:
-    return "_WAIF";
-  case TYPE_BOOL:
-    return "BOOL";
-  case TYPE_STR:
-    return "STR";
-  case TYPE_FLOAT:
-    return "FLOAT";
-  case TYPE_LIST:
-    return "LIST";
-  case TYPE_MAP:
-    return "MAP";
-  case TYPE_ANON:
-    return "ANON";
-  case TYPE_WAIF:
-    return "WAIF";
-  default:
-    break;
-  }
-
-  return ">>UNKNOWN TYPE " + std::to_string(t) + "<<";
-}
-
-#define TYPE_ANY ((var_type) -1)	/* wildcard for use in declaring built-ins */
-#define TYPE_NUMERIC ((var_type) -2)	/* wildcard for (integer or float) */
+#define TYPE_ANY     0xffffffff                             /* wildcard for use in declaring built-ins */
+#define TYPE_NUMERIC (TYPE_INT | TYPE_FLOAT | TYPE_COMPLEX) /* wildcard for (integer, float, or complex) */
 
 typedef struct Var Var;
 
@@ -212,19 +178,27 @@ typedef struct Waif {
 #endif
 } Waif;
 
+typedef struct db_verb_handle db_verb_handle;
+
+Var get_call(Var who, Var verb);
+
 struct Var {
   union {
-  	const char *str; /* STR */
-  	Num num;		     /* NUM, CATCH, FINALLY */
-    UNum unum;       /* UNUM */
-  	Objid obj;		   /* OBJ */
-  	enum error err;  /* ERR */
-  	Var *list;		   /* LIST */
-  	hashmap *map;		 /* MAP */
-  	double fnum;		 /* FLOAT */
-  	Object *anon;		 /* ANON */
-      Waif *waif;    /* WAIF */
-  	bool truth	;		 /* BOOL */
+    Num num;              /* NUM, CATCH, FINALLY */
+    const char *str;      /* CSTR    */
+    char *str_;           /* STR     */
+    UNum unum;            /* UNUM    */
+    Objid obj;            /* OBJ     */
+    enum error err;       /* ERR     */
+    Var *list;            /* LIST    */
+    hashmap *map;         /* MAP     */
+    double fnum;          /* FLOAT   */
+    Object *anon;         /* ANON    */
+    Waif *waif;           /* WAIF    */
+    bool truth;           /* BOOL    */
+    db_verb_handle *call; /* CALL    */
+    complex_t complex;    /* COMPLEX */
+    void *mat;            /* MATRIX  */
   } v;
 
   var_type type;
@@ -237,7 +211,7 @@ struct Var {
   Var(const std::vector<Var>& other);
 
   // Bracket operators
-  Var& operator[](Num i);
+  Var& operator[](int i);
   Var& operator[](Var k);
   Var& operator[](const char* key);
 
@@ -249,7 +223,11 @@ struct Var {
   Var& operator=(const Var&& other);
   Var& operator=(Var&& other);
 
-  inline bool is_complex() {
+  inline bool is_type() {
+    return _TYPE_TYPE == type;
+  }
+
+  inline bool is_pointer() {
    return TYPE_COMPLEX_FLAG & type;
   }
 
@@ -258,7 +236,7 @@ struct Var {
   }
 
   inline bool is_collection() {
-      return TYPE_LIST == type || TYPE_MAP == type || TYPE_ANON == type;
+      return TYPE_LIST == type || TYPE_MAP == type;
   }
 
   inline bool is_object() {
@@ -266,7 +244,7 @@ struct Var {
   }
 
   inline bool is_int() {
-      return TYPE_INT == type;
+      return TYPE_INT == type || is_type();
   }
 
   inline bool is_str() const {
@@ -277,16 +255,24 @@ struct Var {
     return TYPE_OBJ == type;
   }
 
-  inline bool is_num() const {
-    return TYPE_INT == type || TYPE_FLOAT == type;
-  }
-
-  inline bool is_int() const {
-    return TYPE_INT == type;
-  }
-
   inline bool is_float() const {
     return TYPE_FLOAT == type;
+  }
+
+  inline bool is_complex() const {
+    return TYPE_COMPLEX == type;
+  }
+
+  inline bool is_num() const {
+    return is_int() || is_float() || is_complex() || type == _TYPE_TYPE;
+  }
+  
+  inline bool is_int() const {
+    return TYPE_INT == type || type == _TYPE_TYPE;
+  }
+
+  inline bool is_err() const {
+    return TYPE_ERR == type;
   }
 
   inline const char* str() const {
@@ -304,20 +290,29 @@ struct Var {
 
   inline Num num() const {
     if(is_num())
-      return TYPE_INT == type ? v.num : static_cast<Num>(fnum());
+      if(type & TYPE_COMPLEX) return static_cast<Num>(v.complex.real());
+      return is_int() ? v.num : static_cast<Num>(v.fnum);
     return 0;
   }
 
   inline UNum unum() const {
     if(is_num())
-      return TYPE_INT == type ? v.unum : static_cast<UNum>(fnum());
+      if(type & TYPE_COMPLEX) return static_cast<UNum>(v.complex.real());
+      return is_int() ? v.unum : static_cast<UNum>(v.fnum);
     return 0;
   }
 
   inline double fnum() const {
     if(is_num())
-      return TYPE_FLOAT == type ? v.fnum : static_cast<double>(num());
+      if(type & TYPE_COMPLEX) return static_cast<double>(v.complex.real());
+      return is_float() ? v.fnum : static_cast<double>(v.num);
     return 0.0;
+  }
+
+  inline complex_t complex() const {
+    if(is_num())
+      return is_complex() ? v.complex : complex_t(fnum(), 0.0);
+    return complex_t(0.0, 0.0);
   }
 
   inline enum error err() const {
@@ -335,7 +330,7 @@ struct Var {
     return v;
   }
 
-  static inline Var new_obj(const Objid &obj) {
+  static inline Var new_obj(const Objid obj) {
     Var v;
     v.type = TYPE_OBJ;
     v.v.obj = obj;
@@ -349,17 +344,31 @@ struct Var {
     return v;
   }
 
-  static inline Var new_bool(int value) {
+  static inline Var new_bool(bool truth) {
     Var v;
     v.type = TYPE_BOOL;
-    v.v.truth = value ? true : false;
+    v.v.truth = truth;
     return v;
   }
 
-  static inline Var new_float(const double& d) {
+  static inline Var new_float(const double d) {
     Var v;
     v.type = TYPE_FLOAT;
     v.v.fnum = d;
+    return v;
+  }
+
+  static inline Var new_complex(const double r, const double i) {
+    Var v;
+    v.type = TYPE_COMPLEX;
+    v.v.complex = complex_t(static_cast<float>(r), static_cast<float>(i));
+    return v;
+  }
+
+  static inline Var new_complex(complex_t c) {
+    Var v;
+    v.type = TYPE_COMPLEX;
+    v.v.complex = c;
     return v;
   }
 
@@ -370,13 +379,21 @@ struct Var {
     return v;
   }
 
-  static Var new_string(const char* string) noexcept
-  {
-    Var v;
-    v.type = TYPE_STR;
-    v.v.str = str_dup(string);
-    return v;
+  static inline Var new_str(const char* s, bool copy = false) {
+    return copy ? str_dup_to_var(s) : str_ref_to_var(s);
   }
+
+
+/*
+  static inline Var str_concat(Var a, Var b)
+  {
+    a.v.str = (const char*)myrealloc((void*)a.v.str, memo_strlen(a.v.str) + memo_strlen(b.v.str), M_STRING);
+    a.v.str = strcat((char*)a.v.str, b.v.str);
+    free_str(b.v.str);
+    *b.v.str_ = *a.v.str_;
+    return a;
+  }
+*/
 
   static inline Var new_err(enum error e) {
     Var v;
@@ -385,14 +402,11 @@ struct Var {
     return v;
   }
 
-  static inline Var new_str(const char* s) {
-    return str_ref_to_var(s);
+  static inline Var new_call(Var dude, Var verb) {
+    Var c = get_call(dude, verb);
+    return c;
   }
-
-  static inline Var new_str(const char* s, bool copy) {
-    return copy ? str_dup_to_var(s) : str_ref_to_var(s);
-  }
-
+  
   static inline Var new_list(size_t sz);
   static inline Var new_map(size_t sz);
 
@@ -408,8 +422,19 @@ struct Var {
 
   std::size_t hash() const;
 
+  Var& operator+=(const Var& rhs);
+  Var& operator+(const Var& rhs);
+
   operator std::vector<Var>() const;
   operator std::string() const;
+  operator int() const;
+};
+
+struct db_verb_handle {
+    void *ptr;
+    Objid oid;
+    const char *verbname;
+    Var name;
 };
 
 inline Var
@@ -436,10 +461,10 @@ typedef struct var_pair {
     Var b;
 } var_pair;
 
-extern Var zero;		/* see numbers.c */
-extern Var nothing;		/* see objects.c */
-extern Var clear;		/* see objects.c */
-extern Var none;		/* see objects.c */
+extern Var zero;    /* see numbers.c */
+extern Var nothing; /* see objects.c */
+extern Var clear;   /* see objects.c */
+extern Var none;    /* see objects.c */
 
 /* Hard limits on string, list and map sizes are imposed mainly to
  * keep malloc calculations from rolling over, and thus preventing the
@@ -448,8 +473,8 @@ extern Var none;		/* see objects.c */
  * user-constructed maps, lists and strings should generally be
  * smaller (see options.h)
  */
-#define MAX_STRING	(INT32_MAX - MIN_STRING_CONCAT_LIMIT)
-#define MAX_LIST_VALUE_BYTES_LIMIT	(INT32_MAX - MIN_LIST_VALUE_BYTES_LIMIT)
-#define MAX_MAP_VALUE_BYTES_LIMIT	(INT32_MAX - MIN_MAP_VALUE_BYTES_LIMIT)
+#define MAX_STRING                  (INT32_MAX - MIN_STRING_CONCAT_LIMIT)
+#define MAX_MAP_VALUE_BYTES_LIMIT   (INT32_MAX - MIN_MAP_VALUE_BYTES_LIMIT)
+#define MAX_LIST_VALUE_BYTES_LIMIT  (INT32_MAX - MIN_LIST_VALUE_BYTES_LIMIT)
 
 #endif				/* !Structures_h */

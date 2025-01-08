@@ -18,6 +18,7 @@
 #include <limits.h>
 
 #include "ast.h"
+#include "log.h"
 #include "opcode.h"
 #include "program.h"
 #include "server.h"
@@ -97,7 +98,8 @@ typedef struct state State;
                                 (1 << SLOT_PREPSTR) | \
                                 (1 << SLOT_IOBJ) | \
                                 (1 << SLOT_IOBJSTR) | \
-                                (1 << SLOT_PLAYER))
+                                (1 << SLOT_PLAYER) | \
+                                (1 << SLOT_CMDSTR))
 #else               /* no BYTECODE_REDUCE_REF */
 #define INCR_TRY_DEPTH(SSS)
 #define DECR_TRY_DEPTH(SSS)
@@ -192,6 +194,13 @@ emit_extended_byte(Byte b, State * state)
 {
     emit_byte(OP_EXTENDED, state);
     emit_byte(b, state);
+}
+
+static void
+emit_extended_function_id(unsigned id, state* state)
+{
+    emit_byte((Byte)((id >> 8) & 0x000000ff), state);
+    emit_byte((Byte)(id&0x000000ff), state);
 }
 
 static int
@@ -808,8 +817,19 @@ generate_expr(Expr * expr, State * state)
             break;
         case EXPR_CALL:
             generate_arg_list(expr->e.call.args, state);
-            emit_byte(OP_BI_FUNC_CALL, state);
-            emit_byte(expr->e.call.func, state);
+            if (expr->e.call.func > MAX_BASE_FUNC) {
+                emit_extended_byte(EOP_BI_FUNC_CALL, state);
+                emit_extended_function_id(expr->e.call.func, state);
+            } else {
+                emit_byte(OP_BI_FUNC_CALL, state);
+                emit_byte(expr->e.call.func, state);
+            }
+            break;
+        case EXPR_CALL_HANDLE:
+            generate_expr(expr->e.handle.verb, state);
+            generate_expr(expr->e.handle.obj, state);
+            emit_extended_byte(EOP_CALL_HANDLE, state);
+            pop_stack(1, state);
             break;
         case EXPR_VERB:
             generate_expr(expr->e.verb.obj, state);

@@ -15,8 +15,8 @@
 #include "structures.h"
 #include "utils.h"
 
-static inline Var
-do_intersection(Var s1, Var s2, bool count_dup) {
+Var
+set_intersection(Var s1, Var s2, bool count_dup) {
     Var r = new_list(0);
     Var m = new_map(s2.length());
 
@@ -66,11 +66,11 @@ bf_intersection(Var arglist, Byte next, void *vdata, Objid progr)
         }
     }
 
-    Var r = do_intersection(arglist[1], arglist[2], count_dup);
+    Var r = set_intersection(arglist[1], arglist[2], count_dup);
     if(nargs >= 3) {
         for(auto i=3; i <= nargs; i++) {
             if(arglist[i].type == TYPE_LIST)
-                r = do_intersection(r, arglist[i], count_dup);
+                r = set_intersection(r, arglist[i], count_dup);
             else {
                 free_var(r);
                 free_var(arglist);

@@ -26,6 +26,7 @@
 #include "bf_register.h"
 #include "collection.h"
 #include "config.h"
+#include "execute.h"
 #include "functions.h"
 #include "list.h"
 #include "log.h"
@@ -36,6 +37,7 @@
 #include "streams.h"
 #include "storage.h"
 #include "structures.h"
+#include "tasks.h"
 #include "unparse.h"
 #include "utils.h"
 #include "server.h"
@@ -162,9 +164,9 @@ listforeach(Var list, list_callback func)
     auto len = list.length();
 
     int ret;
-    for (auto i = 1; i <= len; i++) {
+
+    for(auto i = 1; i <= len; i++)
         if ((ret = func(list[i], i))) return ret;
-    }
 
     return 0;
 }
@@ -217,11 +219,13 @@ listset(Var list, Var value, int pos)
     return _new;
 }
 
+/*
 static Var
 listreserve(Var list, int size) {
     list.v.list = (Var *) myrealloc(list.v.list, (next_power_of_two(size)) * sizeof(Var), M_LIST);
     return list;
 }
+*/
 
 static Var
 doinsert(Var list, Var value, int pos)
@@ -333,12 +337,10 @@ listconcat(Var first, Var second) {
     int len1 = first.length();
     int len2 = second.length();
 
-    if(len1 == 0 && len2 == 0)
+    if((len1 == 0 && len2 == 0) || len2 == 0)
         return first;
     else if(len1 == 0)
         return second;
-    else if(len2 == 0) 
-        return first;
     
     int len = len1 + len2;
 
@@ -355,18 +357,19 @@ listconcat(Var first, Var second) {
         metadata_new->size = metadata_first->size + metadata_second->size;
     #endif
 
-    _new[(Num)0] = Var::new_int(len);
-    if(len1 > 0) memcpy(&_new[1], &first[1], len1 * sizeof(Var));
-    if(len2 > 0) memcpy(&_new[len1 + 1], &second[1], len2 * sizeof(Var));
+    _new[0] = Var::new_int(len);
+    //if(len1 > 0) memcpy(&_new[1], &first[1], len1 * sizeof(Var));
+    //if(len2 > 0) memcpy(&_new[len1 + 1], &second[1], len2 * sizeof(Var));
 
-    // This seems like it shouldn't be necessary because 
-    // the refs we add here should immediately be decremented
-    // by freeing first/second. But without it, there's a 
-    // memory corruption when freeing the ANON object which
-    // manages the MCP session in ToastCore. Have to leave
-    // this in until we figure it out...
-    for(auto i=1; i<=len; i++)
-        _new[i] = var_ref(_new[i]);
+    // Add refs
+    //for(auto i=1; i<=len; i++)
+    //    _new[i] = var_ref(_new[i]);
+
+    for(auto i=1; i<=len1; i++)
+        _new[i] = var_ref(first[i]);
+
+    for(auto i=1; i<=len2; i++)
+        _new[len1 + i] = var_ref(second[i]);
 
     free_var(first);
     free_var(second);
@@ -485,16 +488,70 @@ listequal(Var lhs, Var rhs, int case_matters)
     return 1;
 }
 
+static inline void
+stream_add_float(Stream *s, double v, bool should_round)
+{
+    char buffer[41];
+    bool round = should_round && is_round(v);
+
+    if(round) 
+        snprintf(buffer, 40, "%.0f", v);
+    else
+        snprintf(buffer, 40, "%.*g", DBL_DIG, v);
+
+    if (!round && !strchr(buffer, '.') && !strchr(buffer, 'e'))
+        strncat(buffer, ".0", 40);
+
+    stream_add_string(s, buffer);
+}
+
+static void
+stream_add_complex(Stream * s, Var v)
+{
+    complex_t c = v.v.complex;
+    double real = c.real();
+    double imag = c.imag();
+
+    bool has_real = std::fabs(real) > EPSILON32;
+    bool has_imag = true; // std::fabs(imag) > EPSILON32;
+
+    if(has_real) {
+        if(has_imag) stream_add_char(s, '(');
+        stream_add_float(s, c.real(), true);
+    }
+
+    if(has_imag) {
+        if(has_real) 
+            stream_add_string(s, imag >= 0.0 ? " + " : " - ");
+        else if(imag < 0.0)
+            stream_add_string(s, "-");
+
+        stream_add_float(s, std::fabs(imag) > EPSILON32 ? abs(c.imag()) : 0.0, true);
+        stream_add_string(s, (has_real) ? "i)" : "i");
+    }
+}
+
 static void
 stream_add_tostr(Stream * s, Var v)
 {
     switch (v.type) {
+        case _TYPE_TYPE:
+            stream_printf(s, "%d", v.v.num & TYPE_DB_MASK);
+            break;
         case TYPE_INT:
             stream_printf(s, "%" PRIdN, v.v.num);
             break;
         case TYPE_OBJ:
-            stream_printf(s, "#%" PRIdN, v.v.obj);
-            break;
+        {
+            if(server_int_option("corify_obj_tostr", 0) > 0) {
+                Var c = corified_as(v, 0);
+                stream_printf(s, "%s", c.v.str);
+                free_var(c);
+            } else {
+                stream_printf(s, "#%" PRIdN, v.v.obj);
+            }
+        }
+        break;
         case TYPE_STR:
             stream_add_string(s, v.v.str);
             break;
@@ -518,6 +575,19 @@ stream_add_tostr(Stream * s, Var v)
             break;
         case TYPE_BOOL:
             stream_add_string(s, v.v.truth ? "true" : "false");
+            break;
+        case TYPE_CALL: 
+        {
+            Var c = corified_as(Var::new_obj(v.v.call->oid), 0);
+            stream_printf(s, "%s::%s", c.str(), v.v.call->verbname);
+            free_var(c);
+        }
+        break;
+        case TYPE_COMPLEX:
+            stream_add_complex(s, v);
+            break;
+        case TYPE_MATRIX:
+            stream_add_string(s, "[MAT]");
             break;
         default:
             panic_moo("STREAM_ADD_TOSTR: Unknown Var type");
@@ -545,21 +615,32 @@ void
 unparse_value(Stream * s, Var v)
 {
     switch (v.type) {
+        case _TYPE_TYPE:
+        {
+                const char *str = parse_type_literal(static_cast<var_type>(v.v.num));
+                stream_printf(s, "%s", str);
+                free_str(str);
+        }
+        break;
         case TYPE_INT:
             stream_printf(s, "%" PRIdN, v.v.num);
             break;
         case TYPE_OBJ:
-            stream_printf(s, "#%" PRIdN, v.v.obj);
-            break;
+        {
+            if(server_int_option("corify_obj_toliteral", 0) > 0) {
+                Var c = corified_as(v, 0);
+                stream_printf(s, "%s", c.v.str);
+                free_var(c);
+            } else {
+                stream_printf(s, "#%" PRIdN, v.v.obj);
+            }
+        }
+        break;
         case TYPE_ERR:
             stream_add_string(s, error_name(v.v.err));
             break;
         case TYPE_FLOAT:
-            char buffer[41];
-            snprintf(buffer, 40, "%.*g", DBL_DIG, v.v.fnum);
-            if (!strchr(buffer, '.') && !strchr(buffer, 'e'))
-                strncat(buffer, ".0", 40);
-            stream_add_string(s, buffer);
+            stream_add_float(s, v.fnum(), false);
             break;
         case TYPE_STR:
         {
@@ -618,14 +699,25 @@ unparse_value(Stream * s, Var v)
         case TYPE_BOOL:
             stream_printf(s, v.v.truth ? "true" : "false");
             break;
+        case TYPE_CALL:
+        {
+            Var c = corified_as(Var::new_obj(v.v.call->oid), 0);
+            stream_printf(s, "%s::%s", c.str(), v.v.call->verbname);
+            free_var(c);
+        }
+        break;
+        case TYPE_COMPLEX:
+            stream_add_complex(s, v);
+            break;
+        case TYPE_MATRIX:
+            stream_add_string(s, "[MAT]");
         case TYPE_NONE:
-            stream_add_string(s, "<NONE>");
+            stream_add_string(s, "(NONE)");
             break;
         case TYPE_CLEAR:
-            stream_add_string(s, "[[CLEAR]]");
+            stream_add_string(s, "[CLEAR]");
             break;
         default:
-            //errlog("UNPARSE_VALUE: Unknown Var type = %d\n", v.type);
             stream_add_string(s, ">>Unknown value<<");
     }
 }
@@ -682,12 +774,12 @@ strrangeset(Var base, int from, int to, Var value)
 {
     /* base and value are free'd */
     int index, offset = 0;
-    int val_len = memo_strlen(value.v.str);
-    int base_len = memo_strlen(base.v.str);
-    int lenleft = (from > 1) ? from - 1 : 0;
+    int val_len   = memo_strlen(value.v.str);
+    int base_len  = memo_strlen(base.v.str);
+    int lenleft   = (from > 1) ? from - 1 : 0;
     int lenmiddle = val_len;
-    int lenright = (base_len > to) ? base_len - to : 0;
-    int newsize = lenleft + lenmiddle + lenright;
+    int lenright  = (base_len > to) ? base_len - to : 0;
+    int newsize   = lenleft + lenmiddle + lenright;
 
     Var ans;
     char *s;
@@ -726,17 +818,22 @@ substr(Var str, int lower, int upper)
         int loop, index = 0;
         char *s = (char *)mymalloc(upper - lower + 2, M_STRING);
 
-        if(!reverse) {
-            for (loop = lower - 1; loop < upper; loop++)
-                s[index++] = str.v.str[loop];
-        } else {
-            for(loop = upper - 1; loop >= lower - 1; loop--)
-                s[index++] = str.v.str[loop];
+        if(lower == upper)
+            s[index++] = str.v.str[lower-1];
+        else {
+            if(!reverse) {
+                for (loop = lower - 1; loop < upper; loop++)
+                    s[index++] = str.v.str[loop];
+            } else {
+                for(loop = upper - 1; loop >= lower - 1; loop--)
+                    s[index++] = str.v.str[loop];
+            }
         }
 
         s[index] = '\0';
         r.v.str = s;
     }
+
     free_var(str);
     return r;
 }
@@ -889,7 +986,6 @@ bf_listset(Var arglist, Byte next, void *vdata, Objid progr)
     return make_var_pack(r);
 }
 
-
 static package
 bf_equal(Var arglist, Byte next, void *vdata, Objid progr)
 {
@@ -897,67 +993,42 @@ bf_equal(Var arglist, Byte next, void *vdata, Objid progr)
     free_var(arglist);
     return make_var_pack(r);
 }
+Var
+explode(Var s, char delim, bool mode) 
+{
+
+    char *found, *return_string, *freeme;
+    Var ret = new_list(0);
+
+    freeme = return_string = strdup(s.str());
+
+    if (mode) {
+        while ((found = strsep(&return_string, &delim)) != nullptr)
+            ret = listappend(ret, str_dup_to_var(found));
+    } else {
+        found = strtok(return_string, &delim);
+        while (found != nullptr) {
+            ret = listappend(ret, str_dup_to_var(found));
+            found = strtok(nullptr, &delim);
+        }
+    }
+
+    free(freeme);
+
+    return ret;
+}
 
 /* Return a list of substrings of an argument separated by a delimiter. */
 static package
 bf_explode(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    const int nargs = arglist.length();
-    const bool adjacent_delim = (nargs > 2 && is_true(arglist[3]));
-    char delim[2];
-    delim[0] = (nargs > 1 && memo_strlen(arglist[2].v.str) > 0) ? arglist[2].v.str[0] : ' ';
-    delim[1] = '\0';
-    char *found, *return_string, *freeme;
-    Var ret = new_list(0);
+    auto nargs = arglist.length();
+    char delim = (nargs >= 2) ? *arglist[2].str() : ' ';
+    bool mode  = (nargs >= 3 && is_true(arglist[3]));
 
-    freeme = return_string = strdup(arglist[1].v.str);
-    free_var(arglist);
+    Var ret = explode(arglist[1], delim, mode);
 
-    if (adjacent_delim) {
-        while ((found = strsep(&return_string, delim)) != nullptr)
-            ret = listappend(ret, str_dup_to_var(found));
-    } else {
-        found = strtok(return_string, delim);
-        while (found != nullptr) {
-            ret = listappend(ret, str_dup_to_var(found));
-            found = strtok(nullptr, delim);
-        }
-    }
-    free(freeme);
     return make_var_pack(ret);
-}
-
-static package
-bf_reverse(Var arglist, Byte next, void *vdata, Objid progr)
-{
-    Var ret;
-
-    if (arglist[1].type == TYPE_LIST) {
-        int elements = arglist[1].length();
-        ret = new_list(elements);
-
-        for (size_t x = elements, y = 1; x >= 1; x--, y++) {
-            ret[y] = var_ref(arglist[1][x]);
-        }
-    } else if (arglist[1].type == TYPE_STR) {
-        size_t len = memo_strlen(arglist[1].v.str);
-        if (len <= 1) {
-            ret = var_ref(arglist[1]);
-        } else {
-            char *new_str = (char *)mymalloc(len + 1, M_STRING);
-            for (size_t x = 0, y = len - 1; x < len; x++, y--)
-                new_str[x] = arglist[1].v.str[y];
-            new_str[len] = '\0';
-            ret.type = TYPE_STR;
-            ret.v.str = new_str;
-        }
-    } else {
-        ret.type = TYPE_ERR;
-        ret.v.err = E_INVARG;
-    }
-
-    free_var(arglist);
-    return ret.type == TYPE_ERR ? make_error_pack(ret.v.err) : make_var_pack(ret);
 }
 
 static package
@@ -1051,10 +1122,10 @@ bf_slice(Var arglist, Byte next, void *vdata, Objid progr)
 void
 sort_callback(Var arglist, Var *ret, void *extra_data)
 {
-    const int nargs = arglist.length();
+    const int nargs        = arglist.length();
     const int list_to_sort = (nargs >= 2 && arglist[2].length() > 0 ? 2 : 1);
-    const bool natural = (nargs >= 3 && is_true(arglist[3]));
-    const bool reverse = (nargs >= 4 && is_true(arglist[4]));
+    const bool natural     = (nargs >= 3 && is_true(arglist[3]));
+    const bool reverse     = (nargs >= 4 && is_true(arglist[4]));
 
     if (arglist[list_to_sort].length() == 0) {
         *ret = new_list(0);
@@ -1162,6 +1233,17 @@ void range_callback(Var arglist, Var *ret, void *extra_data)
     *ret = r;
 }
 
+
+static package 
+bf_make(Var arglist, Byte next, void *vdata, Objid progr) 
+{
+    Var r = new_list(arglist[2].num());
+    for(auto i=1; i<=arglist[2].num(); i++)
+        r[i] = var_ref(arglist[1]);
+    free_var(arglist);
+    return make_var_pack(r);
+}
+
 static package 
 bf_range(Var arglist, Byte next, void *vdata, Objid progr) 
 {
@@ -1193,6 +1275,7 @@ bf_range(Var arglist, Byte next, void *vdata, Objid progr)
     }
 
     Var args = new_list(3);
+
     args[1] = Var::new_int(from);
     args[2] = Var::new_int(step);
     args[3] = Var::new_int(abs((to - from) / step) + 1);
@@ -1628,7 +1711,7 @@ bf_value_bytes(Var arglist, Byte next, void *vdata, Objid progr)
     Var value = arglist[1];
 
     #ifdef MEMO_SIZE
-        if(value.is_complex()) {
+        if(value.is_pointer()) {
             var_metadata *metadata = ((var_metadata*)value.v.list) - 1;
             metadata->size = 0;
         }
@@ -1914,42 +1997,455 @@ bf_remove_ansi(Var arglist, Byte next, void *vdata, Objid progr)
 #undef MARK_FOR_REMOVAL
 }
 
+Var 
+uppercase(Var s) {
+    auto len = memo_strlen(s.str());
+    char *str = (char*)s.str();
+
+    for(auto i=0; i<len; i++)
+        if(str[i] >= 'a' && str[i] <= 'z')
+            str[i] += 'A'-'a';
+
+    return s;
+}
+
+static package
+bf_uppercase(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    Var ret = uppercase(var_ref(arglist[1]));
+    free_var(arglist);
+    return make_var_pack(ret);
+}
+
+Var
+lowercase(Var s)
+{
+    auto len = memo_strlen(s.str());
+    char *str = (char*)s.str();
+
+    for(auto i=0; i<len; i++)
+        if(str[i] >= 'A' && str[i] <= 'Z')
+            str[i] += 'a'-'A';
+
+    return s;
+}
+
+static package
+bf_lowercase(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    Var ret = lowercase(var_ref(arglist[1]));
+    free_var(arglist);
+    return make_var_pack(ret);
+}
+
+typedef enum : Byte {
+    STR_OP_LEFT = 1,
+    STR_OP_RIGHT,
+    STR_OP_BOTH
+} string_op_mode;
+
+static inline const char*
+do_trim(char *str, char c, string_op_mode mode) {
+    int len = memo_strlen(str);
+    int i, j;
+
+    if(mode & STR_OP_LEFT) {
+        for(i = 0; i < len && str[i] == c; i++);
+
+        for(j = 0; i < len; i++, j++)
+            str[j] = str[i];
+
+        str[j] = '\0';
+    }
+
+    if(mode & STR_OP_RIGHT)
+        for(i = (mode & STR_OP_LEFT) ? j - 1 : len - 1; i >= 0 && str[i] == c; i--)
+            str[i]='\0';
+
+    return str;
+}
+
+static package
+bf_str_trim(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    char c = ' ';    
+    if(arglist.length() >= 2) {
+        if(memo_strlen(arglist[2].str()) != 1) {
+            free_var(arglist);
+            return make_error_pack(E_INVARG);
+        }
+        c = arglist[2].str()[0];
+    }
+
+    Var ret = str_dup_to_var(do_trim((char*)arglist[1].str(), c, STR_OP_BOTH));
+
+    free_var(arglist);
+    return make_var_pack(ret);
+}
+
+static package
+bf_str_triml(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    char c = ' ';    
+    if(arglist.length() >= 2) {
+        if(memo_strlen(arglist[2].str()) != 1) {
+            free_var(arglist);
+            return make_error_pack(E_INVARG);
+        }
+        c = arglist[2].str()[0];
+    }
+
+    Var ret = str_dup_to_var(do_trim((char*)arglist[1].str(), c, STR_OP_LEFT));
+
+    free_var(arglist);
+    return make_var_pack(ret);
+}
+
+static package
+bf_str_trimr(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    char c = ' ';    
+    if(arglist.length() >= 2) {
+        if(memo_strlen(arglist[2].str()) != 1) {
+            free_var(arglist);
+            return make_error_pack(E_INVARG);
+        }
+        c = arglist[2].str()[0];
+    }
+
+    Var ret = str_dup_to_var(do_trim((char*)arglist[1].str(), c, STR_OP_RIGHT));
+
+    free_var(arglist);
+    return make_var_pack(ret);
+}
+
+static inline const char*
+do_pad(const char *str, char *buf, int size, int len, char c, int mode) {
+    memset((void*)buf, c, len);
+
+    if(mode == STR_OP_LEFT)
+        strncpy((char*)(buf + (len - size)), str, size);
+    else if(mode == STR_OP_RIGHT)
+        strncpy((char*)buf, str, size);
+    else if(mode == STR_OP_BOTH)
+        strncpy((char*)(buf + (len - size) / 2), str, size);
+
+    buf[len]='\0';
+    return buf;
+}
+
+static package
+bf_str_pad(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    Var src = arglist[1];
+    int len = arglist[2].num();
+    char c = ' ';
+
+    if(arglist.length() >= 3) {
+        if(memo_strlen(arglist[3].str()) == 1)
+            c = arglist[3].str()[0];
+        else {
+            free_var(arglist);
+            return make_error_pack(E_INVARG);
+        }
+    }
+
+    Var r = Var::new_str(len + 1);
+    r.v.str = do_pad(src.str(), r.v.str_, memo_strlen(src.v.str), len, c, STR_OP_BOTH);
+
+    free_var(arglist);
+    return make_var_pack(r);
+}
+
+static package
+bf_str_padr(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    Var src = arglist[1];
+    int len = arglist[2].num();
+    char c = ' ';
+
+    if(arglist.length() >= 3) {
+        if(memo_strlen(arglist[3].str()) == 1)
+            c = arglist[3].str()[0];
+        else {
+            free_var(arglist);
+            return make_error_pack(E_INVARG);
+        }
+    }
+
+    Var r = Var::new_str(len + 1);
+    r.v.str = do_pad(src.str(), r.v.str_, memo_strlen(src.v.str), len, c, STR_OP_RIGHT);
+
+    free_var(arglist);
+    return make_var_pack(r);
+}
+
+static package
+bf_str_padl(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    Var src = arglist[1];
+    int len = arglist[2].num();
+    char c = ' ';
+
+    if(arglist.length() >= 3) {
+        if(memo_strlen(arglist[3].str()) == 1)
+            c = arglist[3].str()[0];
+        else {
+            free_var(arglist);
+            return make_error_pack(E_INVARG);
+        }
+    }
+
+    Var r = Var::new_str(len + 1);
+    r.v.str = do_pad(src.str(), r.v.str_, memo_strlen(src.v.str), len, c, STR_OP_LEFT);
+
+    free_var(arglist);
+    return make_var_pack(r);
+}
+
+Var 
+implode(Var src, Var sep)
+{
+    Var r;
+
+    int src_size = 0;    
+    int sep_size = memo_strlen(sep.str());
+
+    for(auto i=1; i<=src.length(); i++) {
+        if(src[i].type != TYPE_STR) {
+            Var s = str_dup_to_var(toliteral(src[i]).c_str());
+            std::swap(src[i], s);
+            free_var(s);
+        }
+        src_size += memo_strlen(src[i].str());
+    }
+
+    r = Var::new_str(src_size + ((src.length() - 1) * sep_size) + 1);
+    char *buf = (char*)r.str();
+
+    int len = 0, pos = 0, src_len = src.length();
+    for(auto i=1; i<=src_len; i++) {
+        len = memo_strlen(src[i].str());
+        strncpy((char*)(buf) + pos, src[i].str(), len);
+        pos += len;
+        strncpy((char*)(buf) + pos, sep.str(), sep_size);
+        pos += sep_size;
+    }
+
+    buf[memo_strlen(buf)] = '\0';
+
+    free_var(src);
+    free_var(sep);
+
+    return r;
+}
+
+static package
+bf_implode(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    Var r = implode(var_ref(arglist[1]), (arglist.length() >= 2) ? var_ref(arglist[2]) : str_dup_to_var(" "));
+    free_var(arglist);
+    return make_var_pack(r);
+}
+
+static package
+bf_xxhash(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    auto hash = arglist[1].hash();
+    free_var(arglist);
+    return make_var_pack(Var::new_int(hash));
+}
+
+#define ESC '\033'
+
+const char* str_escape(const char *ptr, int len) {
+    const char *str;
+    Stream *s = new_stream(len * 4);
+    TRY_STREAM;
+    try {
+        for (int i = 0; i < len; i++, ptr++) {
+            switch (*ptr) {
+                case '\0': stream_printf(s, "\\0");  break;
+                case '\a': stream_printf(s, "\\a");  break;
+                case '\b': stream_printf(s, "\\b");  break;
+                case  ESC: stream_printf(s, "\\e");  break;
+                case '\f': stream_printf(s, "\\f");  break;
+                case '\n': stream_printf(s, "\\n");  break;
+                case '\r': stream_printf(s, "\\r");  break;
+                case '\t': stream_printf(s, "\\t");  break;
+                case '\v': stream_printf(s, "\\v");  break;
+                case '\\': stream_printf(s, "\\\\"); break;
+                case '\?': stream_printf(s, "\\\?"); break;
+                case '\'': stream_printf(s, "\\\'"); break;
+                case '\"': stream_printf(s, "\\\""); break;
+                default:   stream_printf(s, isprint(*ptr) ? "%c" : "\\%03o", *ptr);
+            }
+        }
+
+        str = str_dup(stream_contents(s));
+    } catch (stream_too_big& exception) {
+        panic_moo("str_escape(): Stream too large");
+    }
+    ENDTRY_STREAM;
+
+    free_stream(s);
+    return str;
+}
+
+const char* str_unescape(const char *ptr, int len) {
+    const char *str;
+    Stream *s = new_stream(len * 4);
+    TRY_STREAM;
+    try {
+        for (auto i = 0; i < len; i++, ptr++) {
+            if(*ptr == '\\') {
+                char c;
+                if((c = (char)strtol(++ptr, (char**)&ptr, 0)))
+                    stream_add_char(s, c);
+                else {
+                    switch (*ptr) {
+                        case '0':  stream_add_char(s, '\0'); break;
+                        case 'a':  stream_add_char(s, '\a'); break;
+                        case 'b':  stream_add_char(s, '\b'); break;
+                        case 'e':  stream_add_char(s,  ESC); break;
+                        case 'f':  stream_add_char(s, '\f'); break;
+                        case 'n':  stream_add_char(s, '\n'); break;
+                        case 'r':  stream_add_char(s, '\r'); break;
+                        case 't':  stream_add_char(s, '\t'); break;
+                        case 'v':  stream_add_char(s, '\v'); break;
+                        case '\\': stream_add_char(s, '\\'); break;
+                        case '?':  stream_add_char(s, '\?'); break;
+                        case '\'': stream_add_char(s, '\''); break;
+                        case '"':  stream_add_char(s, '\"'); break;
+                        default:   stream_add_char(s, *ptr);
+                    }
+                }
+            } else stream_add_char(s, *ptr);
+        }
+
+        str = str_dup(stream_contents(s));
+    } catch (stream_too_big& exception) {
+        panic_moo("str_unescape(): Stream too large");
+    }
+    ENDTRY_STREAM;
+
+    free_stream(s);
+    return str;
+}
+
+static package
+bf_str_escape(Var arglist, Byte next, void *vdata, Objid progr) 
+{
+    const char *str = str_escape(arglist[1].str(), memo_strlen(arglist[1].str()));
+    Var r = str_ref_to_var(str);
+    free_str(str);
+    free_var(arglist);
+    return make_var_pack(r);
+}
+
+static package
+bf_str_unescape(Var arglist, Byte next, void *vdata, Objid progr) 
+{
+    const char *str = str_unescape(arglist[1].str(), memo_strlen(arglist[1].str()));
+    Var r = str_ref_to_var(str);
+    free_str(str);
+    free_var(arglist);
+    return make_var_pack(r);
+}
+
+struct map_args_data {
+    Var func;
+    Var list;
+    Var args;
+};
+
+static package
+bf_map_args(Var arglist, Byte next, void *vdata, Objid progr) 
+{
+    auto nargs = arglist.length();
+    enum error e = E_NONE;
+    struct map_args_data *data;
+
+    if(next == 1) {    
+        data = (struct map_args_data*)alloc_data(sizeof(struct map_args_data));
+        data->func = var_ref(arglist[1]);
+        data->list = var_ref(arglist[2]);
+        data->args = nargs >= 3 ? sublist(var_ref(arglist), 3, arglist.length()) : new_list(0);
+    } else {
+        data = (struct map_args_data*)vdata;
+        data->list[next - 1] = arglist;
+
+        if(next > data->list.length()) {
+            return make_var_pack(data->list);
+        }
+    }
+
+    Var call_args = new_list(1 + data->args.length());
+    call_args[1] = data->list[next];
+    for(auto i=1; i<=data->args.length(); i++) {
+        call_args[i+1] = data->args[i];
+    }
+
+    db_verb_handle h = *(db_verb_handle*)data->func.v.call;
+    Var definer = db_verb_definer(h);
+    Var this_ = Var::new_obj(h.oid);
+
+    e = call_verb2(definer.obj(), h.verbname, is_valid(this_) ? this_ : definer, call_args, 0, DEFAULT_THREAD_MODE);
+
+    return make_call_pack(++next, data);
+}
+
 void
 register_list(void)
 {
-    register_function("value_bytes", 1, 1, bf_value_bytes, TYPE_ANY);
-    register_function("decode_binary", 1, 2, bf_decode_binary, TYPE_STR, TYPE_ANY);
+    register_function("chr",           0, -1, bf_chr);
+    register_function("decode_binary", 1,  2, bf_decode_binary, TYPE_STR, TYPE_ANY);
     register_function("encode_binary", 0, -1, bf_encode_binary);
-    register_function("chr", 0, -1, bf_chr);
+    register_function("value_bytes",   1,  1, bf_value_bytes, TYPE_ANY);
+    register_function("xxhash",        1,  1, bf_xxhash, TYPE_ANY);
+
     /* list */
-    register_function("length", 1, 1, bf_length, TYPE_ANY);
-    register_function("setadd", 2, 2, bf_setadd, TYPE_LIST, TYPE_ANY);
-    register_function("setremove", 2, 2, bf_setremove, TYPE_LIST, TYPE_ANY);
-    register_function("listappend", 2, 3, bf_listappend, TYPE_LIST, TYPE_ANY, TYPE_INT);
-    register_function("listinsert", 2, 3, bf_listinsert, TYPE_LIST, TYPE_ANY, TYPE_INT);
-    register_function("listdelete", 2, 2, bf_listdelete, TYPE_LIST, TYPE_INT);
-    register_function("listset", 3, 3, bf_listset, TYPE_LIST, TYPE_ANY, TYPE_INT);
-    register_function("equal", 2, 2, bf_equal, TYPE_ANY, TYPE_ANY);
-    register_function("explode", 1, 3, bf_explode, TYPE_STR, TYPE_STR, TYPE_INT);
-    register_function("reverse", 1, 1, bf_reverse, TYPE_ANY);
-    register_function("slice", 1, 3, bf_slice, TYPE_LIST, TYPE_ANY, TYPE_ANY);
-    register_function("sort", 1, 4, bf_sort, TYPE_LIST, TYPE_LIST, TYPE_INT, TYPE_INT);
-    register_function("all_members", 2, 2, bf_all_members, TYPE_ANY, TYPE_LIST);
-    register_function("range", 2, 4, bf_range, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_BOOL);
-    register_function("shuffle", 1, 2, bf_shuffle, TYPE_LIST, TYPE_INT);
+    register_function("length",      1,  1, bf_length, TYPE_ANY);
+    register_function("setadd",      2,  2, bf_setadd, TYPE_LIST, TYPE_ANY);
+    register_function("setremove",   2,  2, bf_setremove, TYPE_LIST, TYPE_ANY);
+    register_function("listappend",  2,  3, bf_listappend, TYPE_LIST, TYPE_ANY, TYPE_INT);
+    register_function("listinsert",  2,  3, bf_listinsert, TYPE_LIST, TYPE_ANY, TYPE_INT);
+    register_function("listdelete",  2,  2, bf_listdelete, TYPE_LIST, TYPE_INT);
+    register_function("listset",     3,  3, bf_listset, TYPE_LIST, TYPE_ANY, TYPE_INT);
+    register_function("equal",       2,  2, bf_equal, TYPE_ANY, TYPE_ANY);
+    register_function("explode",     1,  3, bf_explode, TYPE_STR, TYPE_STR, TYPE_INT);
+    register_function("implode",     2,  2, bf_implode, TYPE_LIST, TYPE_STR);
+    register_function("slice",       1,  3, bf_slice, TYPE_LIST, TYPE_ANY, TYPE_ANY);
+    register_function("sort",        1,  4, bf_sort, TYPE_LIST, TYPE_LIST, TYPE_INT, TYPE_INT);
+    register_function("all_members", 2,  2, bf_all_members, TYPE_ANY, TYPE_LIST);
+    register_function("make",        2,  2, bf_make, TYPE_ANY, TYPE_INT);
+    register_function("range",       2,  4, bf_range, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_BOOL);
+    register_function("shuffle",     1,  2, bf_shuffle, TYPE_LIST, TYPE_INT);
+    register_function("map_args",    2, -1, bf_map_args, TYPE_CALL, TYPE_LIST, TYPE_ANY);
+
+    setup_pattern_cache();
 
     /* string */
-    register_function("tostr", 0, -1, bf_tostr);
-    register_function("toliteral", 1, 1, bf_toliteral, TYPE_ANY);
-    setup_pattern_cache();
-    register_function("match", 2, 3, bf_match, TYPE_STR, TYPE_STR, TYPE_ANY);
-    register_function("rmatch", 2, 3, bf_rmatch, TYPE_STR, TYPE_STR, TYPE_ANY);
-    register_function("substitute", 2, 2, bf_substitute, TYPE_STR, TYPE_LIST);
-    register_function("index", 2, 4, bf_index, TYPE_STR, TYPE_STR, TYPE_ANY, TYPE_INT);
-    register_function("rindex", 2, 4, bf_rindex, TYPE_STR, TYPE_STR, TYPE_ANY, TYPE_INT);
-    register_function("strcmp", 2, 2, bf_strcmp, TYPE_STR, TYPE_STR);
-    register_function("strsub", 3, 4, bf_strsub, TYPE_STR, TYPE_STR, TYPE_STR, TYPE_ANY);
-    register_function("strtr", 3, 4, bf_strtr, TYPE_STR, TYPE_STR, TYPE_STR, TYPE_ANY);
-    register_function("parse_ansi", 1, 1, bf_parse_ansi, TYPE_STR);
-    register_function("remove_ansi", 1, 1, bf_remove_ansi, TYPE_STR);
+    register_function("tostr",         0, -1, bf_tostr);
+    register_function("toliteral",     1,  1, bf_toliteral, TYPE_ANY);
+    register_function("match",         2,  3, bf_match, TYPE_STR, TYPE_STR, TYPE_ANY);
+    register_function("rmatch",        2,  3, bf_rmatch, TYPE_STR, TYPE_STR, TYPE_ANY);
+    register_function("substitute",    2,  2, bf_substitute, TYPE_STR, TYPE_LIST);
+    register_function("index",         2,  4, bf_index, TYPE_STR, TYPE_STR, TYPE_ANY, TYPE_INT);
+    register_function("rindex",        2,  4, bf_rindex, TYPE_STR, TYPE_STR, TYPE_ANY, TYPE_INT);
+    register_function("strcmp",        2,  2, bf_strcmp, TYPE_STR, TYPE_STR);
+    register_function("strsub",        3,  4, bf_strsub, TYPE_STR, TYPE_STR, TYPE_STR, TYPE_ANY);
+    register_function("strtr",         3,  4, bf_strtr, TYPE_STR, TYPE_STR, TYPE_STR, TYPE_ANY);
+    register_function("str_trim",      1,  2, bf_str_trim, TYPE_STR, TYPE_STR);
+    register_function("str_triml",     1,  2, bf_str_triml, TYPE_STR, TYPE_STR);
+    register_function("str_trimr",     1,  2, bf_str_trimr, TYPE_STR, TYPE_STR);
+    register_function("str_pad",       2,  3, bf_str_pad, TYPE_STR, TYPE_INT, TYPE_STR);
+    register_function("str_padr",      2,  3, bf_str_padr, TYPE_STR, TYPE_INT, TYPE_STR);
+    register_function("str_padl",      2,  3, bf_str_padl, TYPE_STR, TYPE_INT, TYPE_STR);
+    register_function("str_uppercase", 1,  1, bf_uppercase, TYPE_STR);
+    register_function("str_lowercase", 1,  1, bf_lowercase, TYPE_STR);
+    register_function("str_escape",    1,  1, bf_str_escape, TYPE_STR);
+    register_function("str_unescape",  1,  1, bf_str_unescape, TYPE_STR);
+    register_function("parse_ansi",    1,  1, bf_parse_ansi, TYPE_STR);
+    register_function("remove_ansi",   1,  1, bf_remove_ansi, TYPE_STR);
 }

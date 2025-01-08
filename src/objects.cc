@@ -24,6 +24,7 @@
 #include "execute.h"
 #include "functions.h"
 #include "list.h"
+#include "map.h"
 #include "numbers.h"
 #include "quota.h"
 #include "server.h"
@@ -274,7 +275,7 @@ static package
 bf_typeof(Var arglist, Byte next, void *vdata, Objid progr)
 {
     Var r;
-    r.type = TYPE_INT;
+    r.type = _TYPE_TYPE;
     r.v.num = (int) arglist[1].type & TYPE_DB_MASK;
     free_var(arglist);
     return make_var_pack(r);
@@ -309,6 +310,70 @@ bf_max_object(Var arglist, Byte next, void *vdata, Objid progr)
     return make_var_pack(r);
 }
 
+
+struct create_args {
+    Var parents;
+    Objid owner;
+    bool memento;
+    Var init;
+    enum error err;
+};
+
+static struct create_args 
+parse_create_args(Var arglist, Objid progr)
+{
+    auto nargs = arglist.length();
+
+    struct create_args args;
+    args.owner = progr;
+    args.memento = false;
+    args.err = E_NONE;
+
+    if (!is_obj_or_list_of_objs(arglist[1])) {
+        args.err = E_TYPE;
+        return args;
+    } else {
+        if(arglist[1].type == TYPE_OBJ)
+            args.parents = enlist_var(arglist[1]);
+        else
+            args.parents = arglist[1];
+    }
+
+    if (nargs >= 2 && arglist[2].type == TYPE_OBJ)
+        args.owner = arglist[2].v.obj; 
+    else if (nargs >= 2 && arglist[2].type == TYPE_INT)
+        args.memento = arglist[2].num() > 0;
+    else if (nargs >= 2 && arglist[2].type == TYPE_LIST)
+        args.init = arglist[2];
+    else if (nargs >= 2) {
+        args.err = E_TYPE;
+        return args;
+    }
+
+    if (nargs >= 3 && arglist[3].type == TYPE_INT && !args.memento)
+        args.memento = arglist[3].num() > 0;
+    else if (nargs >= 2 && arglist[3].type == TYPE_LIST && args.init.type != TYPE_LIST)
+        args.init = arglist[3];
+    else if (nargs >= 3) {
+        args.err = E_TYPE;
+        return args;
+    }
+
+    if (nargs >= 4 && arglist[4].type == TYPE_INT && !args.memento)
+        args.memento = arglist[4].num() > 0;
+    else if (nargs >= 4 && arglist[4].type == TYPE_LIST && args.init.type != TYPE_LIST)
+        args.init = arglist[4];
+    else if (nargs >= 4) {
+        args.err = E_TYPE;
+        return args;
+    }
+
+    if(args.init.type != TYPE_LIST)
+        args.init = new_list(0);
+
+    return args;
+}
+
 static package
 bf_create(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (OBJ|LIST parent(s) [, OBJ owner] [, INT anonymous] [, LIST args]) */
@@ -316,111 +381,55 @@ bf_create(Var arglist, Byte next, void *vdata, Objid progr)
     Var r;
 
     if (next == 1) {
-        // there must be at least one argument, and
-        // it must be an object or list of objects
-        if (!is_obj_or_list_of_objs(arglist[1])) {
+        struct create_args args = parse_create_args(arglist, progr);
+
+        if(args.err != E_NONE) {
             free_var(arglist);
             return make_error_pack(E_TYPE);
         }
 
-        int nargs = arglist.length();
-        Objid owner = progr;
-        int anon = 0; // position of the anonymous flag argument
-        int init = 0; // position of the initializer argument
-
-        if (1 < nargs && TYPE_OBJ == arglist[2].type)
-            owner = arglist[2].v.obj;
-        else if (1 < nargs && TYPE_INT == arglist[2].type)
-            anon = 2;
-        else if (1 < nargs && TYPE_LIST == arglist[2].type)
-            init = 2;
-        else if (1 < nargs) {
-            free_var(arglist);
-            return make_error_pack(E_TYPE);
-        }
-
-        if (2 < nargs && TYPE_INT == arglist[3].type && !anon)
-            anon = 3;
-        else if (2 < nargs && TYPE_LIST == arglist[3].type && !init)
-            init = 3;
-        else if (2 < nargs) {
-            free_var(arglist);
-            return make_error_pack(E_TYPE);
-        }
-
-        if (3 < nargs && TYPE_INT == arglist[4].type && !anon)
-            anon = 4;
-        else if (3 < nargs && TYPE_LIST == arglist[4].type && !init)
-            init = 4;
-        else if (3 < nargs) {
-            free_var(arglist);
-            return make_error_pack(E_TYPE);
-        }
-
-        bool anonymous = anon > 0 ? arglist[anon].v.num : false;
-
-        if ((anonymous && owner == NOTHING)
-                || (!valid(owner) && owner != NOTHING)
-                || (arglist[1].type == TYPE_OBJ
-                    && !valid(arglist[1].v.obj)
-                    && arglist[1].v.obj != NOTHING)
-                || (arglist[1].type == TYPE_LIST
-                    && !all_valid(arglist[1]))) {
+        if ((args.memento && args.owner == NOTHING) || (!valid(args.owner) && args.owner != NOTHING) || !all_valid(args.parents)) {
             free_var(arglist);
             return make_error_pack(E_INVARG);
-        }
-        else if ((progr != owner && !is_wizard(progr))
-                 || (arglist[1].type == TYPE_OBJ
-                     && valid(arglist[1].v.obj)
-                     && !db_object_allows(arglist[1], progr,
-                                          anonymous ? FLAG_ANONYMOUS : FLAG_FERTILE))
-                 || (arglist[1].type == TYPE_LIST
-                     && !all_allowed(arglist[1], progr,
-                                     anonymous ? FLAG_ANONYMOUS : FLAG_FERTILE))) {
+        } else if ((args.owner != progr && !is_wizard(progr)) || !all_allowed(args.parents, progr, FLAG_FERTILE)) {
             free_var(arglist);
             return make_error_pack(E_PERM);
         }
 
-        if (valid(owner) && !decr_quota(owner)) {
+        if (valid(args.owner) && !decr_quota(args.owner)) {
             free_var(arglist);
             return make_error_pack(E_QUOTA);
-        }
-        else {
+        } else {
             enum error e;
-            Objid last = db_last_used_objid();
-            Objid oid = db_create_object(-1);
-            Var args;
+            if(!args.memento) {
+                Objid last = db_last_used_objid();
+                Objid oid = db_create_object(-1);
 
-            db_set_object_owner(oid, !valid(owner) ? oid : owner);
+                db_set_object_owner(oid, !valid(args.owner) ? oid : args.owner);
 
-            if (!db_change_parents(Var::new_obj(oid), arglist[1], none)) {
-                db_destroy_object(oid);
-                db_set_last_used_objid(last);
-                free_var(arglist);
-                return make_error_pack(E_INVARG);
-            }
+                if (!db_change_parents(Var::new_obj(oid), args.parents, none)) {
+                    db_destroy_object(oid);
+                    db_set_last_used_objid(last);
+                    free_var(arglist);
+                    return make_error_pack(E_INVARG);
+                }
 
-            /*
-             * If anonymous, clean up the object used to create the
-             * anonymous object; `oid' is invalid after that.
-             */
-            if (anonymous) {
-                r.type = TYPE_ANON;
-                r.v.anon = db_make_anonymous(oid, last);
+                r = Var::new_obj(oid);
             } else {
-                r.type = TYPE_OBJ;
-                r.v.obj = oid;
+                r = Var::new_obj(create_memento_object(args.parents, args.owner));
+                if(r.obj() == NOTHING) {
+                    free_var(arglist);
+                    return make_error_pack(E_INVARG);
+                }
             }
 
             data = (Var *)alloc_data(sizeof(Var));
             *data = var_ref(r);
 
-            /* pass in initializer args, if present */
-            args = init > 0 ? var_ref(arglist[init]) : new_list(0);
-
+            Var init = var_ref(args.init);
             free_var(arglist);
 
-            e = call_verb(oid, "initialize", r, args, 0);
+            e = call_verb(r.obj(), "initialize", r, init, 0);
             /* e will not be E_INVIND */
 
             if (e == E_NONE) {
@@ -430,7 +439,7 @@ bf_create(Var arglist, Byte next, void *vdata, Objid progr)
 
             free_var(*data);
             free_data(data);
-            free_var(args);
+            free_var(init);
 
             if (e == E_MAXREC) {
                 free_var(r);
@@ -538,89 +547,31 @@ bf_create_read(void)
 }
 
 static package
-bf_chparent_chparents(Var arglist, Byte next, void *vdata, Objid progr)
+bf_chparents(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (OBJ obj, OBJ|LIST what, LIST anon) */
+    int nargs = listlength(arglist);
     Var obj = arglist[1];
-    Var what = arglist[2];
-    int n = listlength(arglist);
-    Var anon_kids = nothing;
+    Var what = (arglist[2].type == TYPE_OBJ) ? enlist_var(arglist[2]) : arglist[2];
 
-    if (!obj.is_object() || !is_obj_or_list_of_objs(what)) {
+    if(!is_list_of_objs(what)) {
         free_var(arglist);
         return make_error_pack(E_TYPE);
-    }
-
-    if (n > 2 && !is_wizard(progr)) {
-        free_var(arglist);
-        return make_error_pack(E_PERM);
-    }
-    else if (n > 2) {
-        anon_kids = arglist[3];
-    }
-
-    if (!is_valid(obj)
-            || (what.type == TYPE_OBJ && !valid(what.v.obj)
-                && what.v.obj != NOTHING)
-            || (what.type == TYPE_LIST
-                && !all_valid(what))) {
+    } else if (!all_valid(what) && (what.length() != 1 || what[1].obj() != -1)) {
         free_var(arglist);
         return make_error_pack(E_INVARG);
-    }
-    else if (!controls2(progr, obj)
-             || (what.type == TYPE_OBJ && valid(what.v.obj)
-                 && !db_object_allows(what, progr, FLAG_FERTILE))
-             || (what.type == TYPE_LIST
-                 && !all_allowed(what, progr, FLAG_FERTILE))) {
+    } else if ((nargs > 2 && !is_wizard(progr)) || !controls2(progr, obj) || !all_allowed(what, progr, FLAG_FERTILE)) {
         free_var(arglist);
         return make_error_pack(E_PERM);
-    }
-    else if ((what.type == TYPE_OBJ && is_a_descendant(what, obj))
-             || (what.type == TYPE_LIST && any_are_descendants(what, obj))) {
+    } else if (any_are_descendants(what, obj)) {
         free_var(arglist);
         return make_error_pack(E_RECMOVE);
-    }
-    else {
-        if (!db_change_parents(obj, what, anon_kids)) {
-            free_var(arglist);
-            return make_error_pack(E_INVARG);
-        }
-        else {
-            free_var(arglist);
-            return no_var_pack();
-        }
-    }
-}
-
-/* bf_parent is DEPRECATED!  It returns only the first parent in the
- * set of parents.  Use bf_parents!
- */
-static package
-bf_parent(Var arglist, Byte next, void *vdata, Objid progr)
-{   /* (OBJ object) */
-    Var r;
-
-    if (!arglist[1].is_object()) {
-        free_var(arglist);
-        return make_error_pack(E_TYPE);
-    } else if (!is_valid(arglist[1])) {
+    } else if (!db_change_parents(obj, what, (nargs > 2) ? arglist[3] : nothing)) {
         free_var(arglist);
         return make_error_pack(E_INVARG);
-    } else {
-        r = var_ref(db_object_parents2(arglist[1]));
-        free_var(arglist);
     }
 
-    if (TYPE_OBJ == r.type)
-        return make_var_pack(r);
-
-    if (0 == listlength(r)) {
-        free_var(r);
-        return make_var_pack(Var::new_obj(NOTHING));
-    } else {
-        Var t = var_ref(r[1]);
-        free_var(r);
-        return make_var_pack(t);
-    }
+    free_var(arglist);    
+    return no_var_pack();
 }
 
 static package
@@ -701,11 +652,11 @@ bf_descendants(Var arglist, Byte next, void *vdata, Objid progr)
     } else if (!is_valid(obj)) {
         free_var(arglist);
         return make_error_pack(E_INVARG);
-    } else {
-        Var r = db_descendants(obj, full);
-        free_var(arglist);
-        return make_var_pack(r);
     }
+
+    Var r = db_descendants(obj, full);
+    free_var(arglist);
+    return make_var_pack(r);
 }
 
 static int
@@ -1112,8 +1063,7 @@ bf_occupants(Var arglist, Byte next, void *vdata, Objid progr)
     if (check_parent && !is_obj_or_list_of_objs(parent)) {
         free_var(arglist);
         return make_error_pack(E_TYPE);
-    }
-    else if (!is_list_of_objs(contents) || !all_valid(contents)) {
+    } else if (!is_list_of_objs(contents) || !all_valid(contents)) {
         free_var(arglist);
         return make_error_pack(E_INVARG);
     }
@@ -1282,6 +1232,107 @@ bf_all_contents(Var arglist, Byte next, void *vdata, Objid progr)
     return make_var_pack(r);
 }
 
+static inline Var corified_make_map()
+{
+    Var corified = new_map(0);
+    
+    db_for_all_props(Var::new_obj(SYSTEM_OBJECT), [&corified](Var name, Var value) -> int {
+        if(value.type == TYPE_OBJ) {
+            Stream *s = new_stream(memo_strlen(name.v.str)+2);
+            stream_add_char(s, '$');
+            stream_add_string(s, name.v.str);
+
+            if(maphaskey(corified, value)) {
+                if(corified[value].type != TYPE_LIST) {
+                    Var _new = new_list(2);
+                    _new[1] = var_ref(corified[value]);
+                    _new[2] = str_dup_to_var(stream_contents(s));
+                    corified[value] = _new;
+                } else {
+                    corified[value] = listappend(corified[value], str_dup_to_var(stream_contents(s)));
+                }
+            } else {
+                corified = mapinsert(corified, var_ref(value), str_dup_to_var(stream_contents(s)));
+            }
+
+            free_stream(s);
+        } else if(value.type == TYPE_MAP) {
+            mapforeach(value, [&name, &corified](Var mapkey, Var mapvalue, int index) -> int {
+                if(mapkey.type == TYPE_STR && mapvalue.type == TYPE_OBJ) {
+                    Stream *s = new_stream(memo_strlen(name.v.str)+memo_strlen(mapkey.v.str)+6);
+                    stream_printf(s, "$%s[\"%s\"]", name.v.str, mapkey.v.str);
+
+                    if(maphaskey(corified, mapvalue)) {
+                        if(corified[mapvalue].type != TYPE_LIST) {
+                            Var _new = new_list(2);
+                            _new[1] = var_ref(corified[mapvalue]);
+                            _new[2] = str_dup_to_var(stream_contents(s));
+                            corified[mapvalue] = _new;
+                        } else {
+                            corified[mapvalue] = listappend(corified[mapvalue], str_dup_to_var(stream_contents(s)));
+                        }
+                    } else {
+                        corified = mapinsert(corified, var_ref(mapvalue), str_dup_to_var(stream_contents(s)));
+                    }
+
+                    free_stream(s);
+                }
+                return 0;
+            });
+
+        }
+        return 0;
+    });
+
+    return corified;
+}
+
+static inline int check_nonce() {
+    static int last_nonce = dbpriv_nonce(dbpriv_dereference(Var::new_obj(SYSTEM_OBJECT)));
+
+    int mode = 0;
+    int nonce = dbpriv_nonce(dbpriv_dereference(Var::new_obj(SYSTEM_OBJECT)));
+    if(last_nonce != nonce) {
+        last_nonce = nonce;
+        mode = -1;
+    }
+    return mode;
+}
+
+Var corified_as(Var obj, int mode) {
+    static Var corified = corified_make_map();
+
+    if(mode < 0) {
+        free_var(corified);
+        corified = corified_make_map();
+    }
+
+    Var r;
+    if(maphaskey(corified, obj)) {
+        r = var_ref((mode == 0 && corified[obj].type == TYPE_LIST) ? corified[obj][1] : corified[obj]);
+    } else {
+        size_t nlen = log10(abs(obj.obj())) + 3;
+        if(obj.obj() < 0) nlen++;
+
+        Stream *s = new_stream(nlen);
+        stream_printf(s, "#%lld", obj.obj());
+
+        r = str_dup_to_var(stream_contents(s));
+        
+        free_stream(s);
+    }
+
+    return r;
+}
+
+static package
+bf_corified_as(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    Var r = corified_as(arglist[1], arglist.length() >= 2 ? arglist[2].num() : check_nonce());
+    free_var(arglist);
+    return make_var_pack(r);
+}
+
 Var nothing;        /* useful constant */
 Var clear;          /* useful constant */
 Var none;           /* useful constant */
@@ -1289,52 +1340,42 @@ Var none;           /* useful constant */
 void
 register_objects(void)
 {
-    nothing.type = TYPE_OBJ;
+    nothing.type  = TYPE_OBJ;
     nothing.v.obj = NOTHING;
-    clear.type = TYPE_CLEAR;
-    none.type = TYPE_NONE;
+    clear.type    = TYPE_CLEAR;
+    none.type     = TYPE_NONE;
 
-    register_function("toobj", 1, 1, bf_toobj, TYPE_ANY);
+    register_function("toobj",  1, 1, bf_toobj, TYPE_ANY);
     register_function("typeof", 1, 1, bf_typeof, TYPE_ANY);
-    register_function_with_read_write("create", 1, 4, bf_create,
-                                      bf_create_read, bf_create_write,
-                                      TYPE_ANY, TYPE_ANY, TYPE_ANY, TYPE_ANY);
-    register_function_with_read_write("recreate", 2, 3, bf_recreate,
-                                      bf_create_read, bf_create_write,
-                                      TYPE_OBJ, TYPE_OBJ, TYPE_OBJ);
-    register_function_with_read_write("recycle", 1, 1, bf_recycle,
-                                      bf_recycle_read, bf_recycle_write,
-                                      TYPE_ANY);
-    register_function("object_bytes", 1, 1, bf_object_bytes, TYPE_ANY);
-    register_function("valid", 1, 1, bf_valid, TYPE_ANY);
-    register_function("chparents", 2, 3, bf_chparent_chparents,
-                      TYPE_ANY, TYPE_LIST, TYPE_LIST);
-    register_function("chparent", 2, 3, bf_chparent_chparents,
-                      TYPE_ANY, TYPE_OBJ, TYPE_LIST);
-    register_function("parents", 1, 1, bf_parents, TYPE_ANY);
-    register_function("parent", 1, 1, bf_parent, TYPE_ANY);
-    register_function("children", 1, 1, bf_children, TYPE_ANY);
-    register_function("ancestors", 1, 2, bf_ancestors,
-                      TYPE_ANY, TYPE_ANY);
-    register_function("descendants", 1, 2, bf_descendants,
-                      TYPE_ANY, TYPE_ANY);
-    register_function("max_object", 0, 0, bf_max_object);
-    register_function("players", 0, 0, bf_players);
-    register_function("is_player", 1, 1, bf_is_player, TYPE_OBJ);
-    register_function("set_player_flag", 2, 2, bf_set_player_flag,
-                      TYPE_OBJ, TYPE_ANY);
-    register_function_with_read_write("move", 2, 3, bf_move,
-                                      bf_move_read, bf_move_write,
-                                      TYPE_OBJ, TYPE_OBJ, TYPE_INT);
-    register_function("isa", 2, 3, bf_isa, TYPE_ANY, TYPE_ANY, TYPE_INT);
-    register_function("locate_by_name", 1, 2, bf_locate_by_name, TYPE_STR, TYPE_INT);
-    register_function("occupants", 1, 4, bf_occupants, TYPE_LIST, TYPE_ANY, TYPE_INT, TYPE_INT);
-    register_function("locations", 1, 3, bf_locations, TYPE_OBJ, TYPE_OBJ, TYPE_INT);
+
+    register_function_with_read_write("create",   1, 4, bf_create, bf_create_read, bf_create_write, TYPE_ANY, TYPE_ANY, TYPE_ANY, TYPE_ANY);
+    register_function_with_read_write("recreate", 2, 3, bf_recreate, bf_create_read, bf_create_write, TYPE_OBJ, TYPE_OBJ, TYPE_OBJ);
+    register_function_with_read_write("recycle",  1, 1, bf_recycle, bf_recycle_read, bf_recycle_write, TYPE_ANY);
+    register_function_with_read_write("move",     2, 3, bf_move, bf_move_read, bf_move_write, TYPE_OBJ, TYPE_OBJ, TYPE_INT);
+
+    register_function("object_bytes",    1, 1, bf_object_bytes, TYPE_ANY);
+    register_function("valid",           1, 1, bf_valid, TYPE_ANY);
+    register_function("chparents",       2, 3, bf_chparents, TYPE_ANY, TYPE_ANY, TYPE_LIST);
+    register_function("parents",         1, 1, bf_parents, TYPE_ANY);
+    register_function("children",        1, 1, bf_children, TYPE_ANY);
+    register_function("ancestors",       1, 2, bf_ancestors, TYPE_ANY, TYPE_ANY);
+    register_function("descendants",     1, 2, bf_descendants, TYPE_ANY, TYPE_ANY);
+    register_function("max_object",      0, 0, bf_max_object);
+    register_function("players",         0, 0, bf_players);
+    register_function("is_player",       1, 1, bf_is_player, TYPE_OBJ);
+    register_function("set_player_flag", 2, 2, bf_set_player_flag, TYPE_OBJ, TYPE_ANY);
+    register_function("isa",             2, 3, bf_isa, TYPE_ANY, TYPE_ANY, TYPE_INT);
+    register_function("locate_by_name",  1, 2, bf_locate_by_name, TYPE_STR, TYPE_INT);
+    register_function("occupants",       1, 4, bf_occupants, TYPE_LIST, TYPE_ANY, TYPE_INT, TYPE_INT);
+    register_function("locations",       1, 3, bf_locations, TYPE_OBJ, TYPE_OBJ, TYPE_INT);
+
 #ifdef USE_ANCESTOR_CACHE
     register_function("clear_ancestor_cache", 0, 0, bf_clear_ancestor_cache);
 #endif
-    register_function("recycled_objects", 0, 0, bf_recycled_objects);
+
+    register_function("recycled_objects",     0, 0, bf_recycled_objects);
     register_function("next_recycled_object", 0, 1, bf_next_recycled_object, TYPE_OBJ);
-    register_function("owned_objects", 1, 1, bf_owned_objects, TYPE_OBJ);
-    register_function("all_contents", 1, 1, bf_all_contents, TYPE_OBJ);
+    register_function("owned_objects",        1, 1, bf_owned_objects, TYPE_OBJ);
+    register_function("all_contents",         1, 1, bf_all_contents, TYPE_OBJ);
+    register_function("corified_as",          1, 2, bf_corified_as, TYPE_OBJ, TYPE_INT);
 }

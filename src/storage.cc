@@ -47,6 +47,7 @@ refcount_overhead(Memory_Type type)
         case M_TRAV:
         case M_ANON:
         case M_WAIF:
+        case M_CALL:
         case M_STRING:
             total = sizeof(var_metadata);
             break;
@@ -70,9 +71,9 @@ mymalloc(unsigned size, Memory_Type type)
     offs = refcount_overhead(type);
     
     #ifdef USE_RPMALLOC
-      memptr = (char *) rpmalloc(offs + size);
+      memptr = (char *)rpmalloc(offs + size);
     #else
-      memptr = (char *) malloc(offs + size);
+      memptr = (char *)malloc(offs + size);
     #endif
 
     if (!memptr) {

@@ -510,6 +510,7 @@ mapat(Var map, Var key)
     map_entry find{.key = key};
     
     if((found = (map_entry*)maplookup(map, key, nullptr, 0)) != nullptr) {
+        free_var(key);
         return found->value;
     } else {
         Var r;

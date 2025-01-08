@@ -77,7 +77,8 @@ fill_in_rt_consts(Var * env, DB_Version version)
 {
     Var v;
 
-    v.type = TYPE_INT;
+    v.type = _TYPE_TYPE;
+
     v.v.num = (int) TYPE_ERR;
     env[SLOT_ERR] = var_ref(v);
     v.v.num = (int) TYPE_INT;
@@ -92,7 +93,7 @@ fill_in_rt_consts(Var * env, DB_Version version)
     if (version >= DBV_Float) {
         v.v.num = (int) TYPE_INT;
         env[SLOT_INT] = var_ref(v);
-        v.v.num = (int) _TYPE_FLOAT;
+        v.v.num = (int) TYPE_FLOAT;
         env[SLOT_FLOAT] = var_ref(v);
     }
     if (version >= DBV_Map) {
@@ -100,13 +101,15 @@ fill_in_rt_consts(Var * env, DB_Version version)
         env[SLOT_MAP] = var_ref(v);
     }
     if (version >= DBV_Anon) {
-        v.v.num = (int) _TYPE_ANON;
+        //v.v.num = (int) _TYPE_ANON;
+        v.v.num = (int) TYPE_OBJ;
         env[SLOT_ANON] = var_ref(v);
     }
     if (version >= DBV_Waif) {
         v.v.num = (int) _TYPE_WAIF;
         env[SLOT_WAIF] = var_ref(v);
     }
+
     if (version >= DBV_Bool) {
         v.type = TYPE_INT;
         v.v.num = (int) TYPE_BOOL;
@@ -116,6 +119,16 @@ fill_in_rt_consts(Var * env, DB_Version version)
         env[SLOT_TRUE] = var_ref(v);
         v.v.truth = false;
         env[SLOT_FALSE] = var_ref(v);
+    }
+
+    if(version >= DBV_18) {
+        v.type = TYPE_INT;
+        v.v.num = (int) TYPE_CALL;
+        env[SLOT_CALL] = var_ref(v);
+        v.v.num = (int) TYPE_COMPLEX;
+        env[SLOT_COMPLEX] = var_ref(v);
+        v.v.num = (int) TYPE_MATRIX;
+        env[SLOT_MATRIX] = var_ref(v);
     }
 }
 

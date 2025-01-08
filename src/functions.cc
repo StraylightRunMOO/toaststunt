@@ -62,6 +62,7 @@ static registry bi_function_registries[] =
     register_server,
     register_tasks,
     register_verbs,
+    register_match,
     register_yajl,
     register_base64,
     register_fileio,
@@ -106,6 +107,10 @@ struct bft_entry {
 static struct bft_entry bf_table[MAX_FUNC];
 static unsigned top_bf_table = 0;
 
+unsigned registered_function_count() {
+  return top_bf_table - 1;
+}
+
 static unsigned
 register_common(const char *name, int minargs, int maxargs, bf_type func,
                 bf_read_type read, bf_write_type write, va_list args)
@@ -118,9 +123,10 @@ register_common(const char *name, int minargs, int maxargs, bf_type func,
         s = new_stream(30);
 
     if (top_bf_table == MAX_FUNC) {
-	errlog("too many functions.  %s cannot be registered.\n", name);
-	return 0;
+	   errlog("too many functions.  %s cannot be registered.\n", name);
+	   return 0;
     }
+
     bf_table[top_bf_table].name = str_dup(name);
     stream_printf(s, "protect_%s", name);
     bf_table[top_bf_table].protect_str = str_dup(reset_stream(s));
@@ -264,11 +270,16 @@ call_bi_func(unsigned n, Var arglist, Byte func_pc,
             var_type proto = f->prototype[k];
             var_type arg = args[k + 1].type;
 
-            if (!(proto == arg || proto == TYPE_ANY || (proto == TYPE_NUMERIC && (arg == TYPE_INT || arg == TYPE_FLOAT)))) {
+            if(!(proto & arg & TYPE_DB_MASK) && proto != TYPE_ANY) {
                 free_var(arglist);
 
-                stream_printf(error_msg, "%s (args[%i] of %s() expected %s; got %s)",
-                              unparse_error(E_TYPE), k + 1, f->name, parse_type(proto), parse_type(arg));
+                const char *proto_msg = parse_type_multi(proto);
+                const char *arg_msg = parse_type_multi(arg);
+
+                stream_printf(error_msg, "%s (args[%i] of %s() expected %s; got %s)", unparse_error(E_TYPE), k + 1, f->name, proto_msg, arg_msg);
+
+                free_str(proto_msg);
+                free_str(arg_msg);
 
                 return make_raise_pack(E_TYPE, reset_stream(error_msg), var_ref(zero));
             }
@@ -334,7 +345,6 @@ read_bi_func_data(Byte f_id, void **bi_func_state, Byte * bi_func_pc)
     }
     return 1;
 }
-
 
 package
 make_abort_pack(enum abort_reason reason)
@@ -461,19 +471,24 @@ function_description(int i)
     int j, nargs;
 
     entry = bf_table[i];
+
     v = new_list(4);
-    v[1].type = TYPE_STR;
-    v[1].v.str = str_ref(entry.name);
-    v[2].type = TYPE_INT;
-    v[2].v.num = entry.minargs;
-    v[3].type = TYPE_INT;
-    v[3].v.num = entry.maxargs;
+    v[1] = str_ref_to_var(entry.name);
+    v[2] = Var::new_int(entry.minargs);
+    v[3] = Var::new_int(entry.maxargs);
+
     nargs = entry.maxargs == -1 ? entry.minargs : entry.maxargs;
     vv = v[4] = new_list(nargs);
     for (j = 0; j < nargs; j++) {
         int proto = entry.prototype[j];
-        vv[j + 1].type = TYPE_INT;
-        vv[j + 1].v.num = proto < 0 ? proto : (proto & TYPE_DB_MASK);
+        vv[j + 1] = Var::new_int(proto < 0 ? proto : (proto & TYPE_DB_MASK));
+
+        if(proto == TYPE_ANY)
+            vv[j + 1] = Var::new_int(-1);
+        else if(proto == TYPE_NUMERIC)
+            vv[j + 1] = Var::new_int(-2);
+        else
+            vv[j + 1] = Var::new_int(proto < 0 ? proto : (proto & TYPE_DB_MASK));
     }
 
     return v;

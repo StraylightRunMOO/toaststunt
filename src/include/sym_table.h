@@ -69,4 +69,10 @@ extern void free_names(Names *);
 #define SLOT_TRUE   22
 #define SLOT_FALSE   23
 
+/* Added in DBV_18 */
+#define SLOT_CMDSTR 24
+#define SLOT_CALL 25
+#define SLOT_COMPLEX 26
+#define SLOT_MATRIX 27
+
 #endif				/* !Sym_Table_h */

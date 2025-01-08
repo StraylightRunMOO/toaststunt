@@ -2,6 +2,7 @@
 
 #ifdef ARGON2_FOUND
 
+#include <cstring>
 #include <argon2.h>
 
 #include "functions.h"

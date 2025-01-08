@@ -99,3 +99,36 @@ extern void dbio_write_var(Var);
 
 extern void dbio_write_program(Program *);
 extern void dbio_write_forked_program(Program * prog, int f_index);
+
+#define TYPE_COMPLEX_FLAG_OLD	0x80
+#define TYPE_DB_MASK_OLD		  0x7f
+
+// Old MOO types prior to DB Version 18
+typedef enum {
+    TYPE_INT_OLD, /* user-visible */
+    TYPE_OBJ_OLD,
+    _TYPE_STR_OLD,
+    TYPE_ERR_OLD,
+    _TYPE_LIST_OLD,
+    TYPE_CLEAR_OLD,   /* in clear properties' value slot */
+    TYPE_NONE_OLD,    /* in uninitialized MOO variables */
+    TYPE_CATCH_OLD,   /* on-stack marker for an exception handler */
+    TYPE_FINALLY_OLD, /* on-stack marker for a TRY-FINALLY clause */
+    _TYPE_FLOAT_OLD,  /* floating-point number; user-visible */
+    _TYPE_MAP_OLD,    /* map; user-visible */
+    _TYPE_CALL_OLD,   /* formerly iterator - we may be able to re-use this */
+    _TYPE_ANON_OLD,   /* anonymous object; user-visible */
+    _TYPE_WAIF_OLD,   /* lightweight object; user-visible */
+    TYPE_BOOL_OLD,    /* Experimental boolean type */
+    /* THE END - complex aliases come next */
+    TYPE_STR_OLD   = (_TYPE_STR_OLD | TYPE_COMPLEX_FLAG_OLD),
+    TYPE_FLOAT_OLD = (_TYPE_FLOAT_OLD),
+    TYPE_LIST_OLD  = (_TYPE_LIST_OLD | TYPE_COMPLEX_FLAG_OLD),
+    TYPE_MAP_OLD   = (_TYPE_MAP_OLD | TYPE_COMPLEX_FLAG_OLD),
+    TYPE_ANON_OLD  = (_TYPE_ANON_OLD | TYPE_COMPLEX_FLAG_OLD),
+    TYPE_WAIF_OLD  = (_TYPE_WAIF_OLD | TYPE_COMPLEX_FLAG_OLD),
+    TYPE_CALL_OLD  = (_TYPE_CALL_OLD | TYPE_COMPLEX_FLAG_OLD)
+} var_type_old;
+
+#define TYPE_ANY_OLD ((var_type) -1)	/* wildcard for use in declaring built-ins */
+#define TYPE_NUMERIC_OLD ((var_type) -2)	/* wildcard for (integer or float) */

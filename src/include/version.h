@@ -82,8 +82,10 @@ typedef enum {
                  */
     DBV_Threaded,       /* Store threading information
                  */
-    DBV_Bool,       /* Boolean type
-                     */
+    DBV_Bool,       /* Boolean type */
+
+    DBV_18, /* cmdstr */
+
     Num_DB_Versions		/* Special: the current version is this - 1. */
 } DB_Version;
 

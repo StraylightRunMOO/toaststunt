@@ -23,6 +23,8 @@
 #include "tokens.h"
 #include "utils.h"
 
+#define register
+
 %}
 struct keyword {};		/* bogus decl not copied into the output */
 %%

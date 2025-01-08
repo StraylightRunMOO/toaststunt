@@ -135,6 +135,8 @@ parse_command(const char *command, Objid user)
     int pstart, pend, dlen;
     int i;
 
+    pc.cmdstr = str_dup(command);
+
     while (*command == ' ')
         command++;
     switch (*command) {

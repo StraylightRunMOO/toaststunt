@@ -33,6 +33,7 @@ struct Verbdef {
     const char *name;
     Program *program;
     Objid owner;
+    Var meta;
     short perms;
     short prep;
     Verbdef *next;
@@ -122,6 +123,7 @@ extern Var db_read_anonymous();
 extern void db_write_anonymous(Var);
 
 extern void dbpriv_assign_nonce(Object *);
+extern int dbpriv_nonce(Object*);
 
 extern Objid dbpriv_object_owner(Object *);
 extern void dbpriv_set_object_owner(Object *, Objid owner);
@@ -200,6 +202,8 @@ extern void dbpriv_fix_properties_after_chparent(Var obj,
 				 * and adding clear new ones, as
 				 * appropriate for its new parents.
 				 */
+
+extern void dbpriv_fix_props_for_bmi(DB_Version, DB_Version);
 
 /*********** Verbs ***********/
 

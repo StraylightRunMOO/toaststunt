@@ -119,7 +119,8 @@ struct mapping ext_mappings[] =
     {EOP_BITXOR, "BITXOR"},
     {EOP_BITSHL, "BITSHL"},
     {EOP_BITSHR, "BITSHR"},
-    {EOP_COMPLEMENT, "COMPLEMENT"}
+    {EOP_COMPLEMENT, "COMPLEMENT"},
+    {EOP_CALL_HANDLE, "CALL_HANDLE"}
 };
 
 static void
@@ -270,6 +271,11 @@ disassemble(Program * prog, Printer p, void *data)
                 stream_add_string(insn, COUNT_EOP_TICK(b) ? " * " : "   ");
                 stream_add_string(insn, ext_mnemonics[b]);
                 switch ((Extended_Opcode) b) {
+                    case EOP_CALL_HANDLE:
+                        //a1 = ADD_BYTES(bc.numbytes_var_name);
+                        //a2 = ADD_BYTES(bc.numbytes_var_name);
+                        //stream_printf(insn, " %s %s", NAMES(a1), NAMES(a2));
+                        break;
                     case EOP_WHILE_ID:
                         a1 = ADD_BYTES(bc.numbytes_var_name);
                         a2 = ADD_BYTES(bc.numbytes_label);

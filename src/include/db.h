@@ -23,20 +23,16 @@
 #include "config.h"
 #include "program.h"
 #include "structures.h"
+#include "list.h"
 
 static inline bool
 is_list_of_objs(Var v)
 {
-    int i;
+    if (v.type != TYPE_LIST) return false;
 
-    if (TYPE_LIST != v.type)
-		return false;
-
-    for (i = 1; i <= v.length(); i++)
-	if (TYPE_OBJ != v[i].type)
-	    return false;
-
-    return true;
+    return listforeach(v, [](Var value, int index) -> int {
+    	return value.type == TYPE_OBJ ? 0 : 1;
+    }) == 0 ? true : false;
 }
 
 static inline bool
@@ -101,11 +97,13 @@ extern void db_shutdown(void);
 extern void db_clear_ancestor_cache();
 extern int valid(Objid);
 extern int is_valid(Var);
+extern int is_memento(Objid);
 
 extern Objid db_create_object(Num new_objid);
 				/* Creates a new object with parent & location
 				 * == #-1.  Returns new object's id number.
 				 */
+extern Objid create_memento_object(Var, Objid);
 
 extern Objid db_last_used_objid(void);
 extern void db_reset_last_used_objid(void);
@@ -160,7 +158,15 @@ extern Var db_ancestors(Var, bool);
 				 * operating on it.
 				 */
 
-extern Var db_descendants(Var, bool);
+extern Var db_ancestors_old(Var, bool);
+				/* Returns the ancestors in a level order
+				 * traversal, which was the default before
+				 * switching to breadth-first in DB version
+				 * 18. We have to keep it around to fix the
+				 * order of propdefs when upgrading an old DB.
+				 */
+
+extern Var db_descendants(Var, bool full = false);
 				/* Returns a list of the descendants of the
 				 * given object.  db_descendants() does not/
 				 * can not free the returned list.  The caller
@@ -168,7 +174,7 @@ extern Var db_descendants(Var, bool);
 				 * operating on it.
 				 */
 
-extern Var db_all_locations(Var, bool);
+extern Var db_all_locations(Var, bool full = false);
 				/* Returns a list of all objects that
 				 * contain the given object.
 				 * db_all_locations() does not/can not free the
@@ -304,7 +310,6 @@ extern Var db_all_users(void);
 				 */
 
 extern int db_object_isa(Var, Var);
-
 
 /**** properties *****/
 
@@ -348,9 +353,7 @@ extern int db_delete_propdef(Var, const char *);
 				 */
 
 extern int db_count_propdefs(Var);
-extern int db_for_all_propdefs(Var,
-			       int (*)(void *, const char *),
-			       void *);
+extern int db_for_all_propdefs(Var, std::function<int(void*, const char*)>, void*);
 				/* db_for_all_propdefs() does not change the
 				 * reference counts of the property names
 				 * passed to the given callback function.
@@ -358,15 +361,15 @@ extern int db_for_all_propdefs(Var,
 				 * if the references are to be persistent.
 				 */
 
-extern int db_for_all_propvals(Var,
-			       int (*)(void *, Var),
-			       void *);
+extern int db_for_all_propvals(Var, std::function<int(void*, Var)>, void *);
 				/* db_for_all_propvals() does not change the
 				 * reference counts of the values passed to
 				 * the given callback function.  Thus, the
 				 * caller should var_ref() the values if the
 				 * references are to be persistent.
 				 */
+
+extern int db_for_all_props(Var, std::function<int(Var, Var)>);
 
 #define BUILTIN_PROPERTIES(DEFINE)		\
     DEFINE(NAME,name)				\
@@ -398,7 +401,7 @@ typedef struct {
 } db_prop_handle;
 
 extern db_prop_handle db_find_property(Var obj, const char *name,
-				       Var * value);
+				       Var * value, bool old_order = false);
 				/* Returns a handle on the named property of
 				 * the given object.  If `value' is non-null,
 				 * then the value of the named property (after
@@ -425,6 +428,7 @@ extern db_prop_handle db_find_property(Var obj, const char *name,
 				 */
 
 extern Var db_property_value(db_prop_handle);
+extern Var db_property_value_default(Objid, const char*, Var);
 extern void db_set_property_value(db_prop_handle, Var);
 				/* For non-built-in properties, these functions
 				 * do not change the reference count of the
@@ -554,10 +558,6 @@ extern int db_for_all_verbs(Var,
 				 * if the references are to be persistent.
 				 */
 
-typedef struct {
-    void *ptr;
-} db_verb_handle;
-
 extern db_verb_handle db_find_command_verb(Objid oid, const char *verb,
 					 db_arg_spec dobj, unsigned prep,
 					   db_arg_spec iobj);
@@ -586,6 +586,8 @@ extern db_verb_handle db_find_callable_verb(Var recv, const char *verb);
 				 * `db_verb_handle' argument are guaranteed to
 				 * leave the handle intact.
 				 */
+
+extern const char* verb_name(db_verb_handle h);
 
 extern db_verb_handle db_find_defined_verb(Var obj, const char *verb,
 					   int allow_numbers);
@@ -630,6 +632,9 @@ extern void db_set_verb_names(db_verb_handle, const char *);
 extern Objid db_verb_owner(db_verb_handle);
 extern void db_set_verb_owner(db_verb_handle, Objid);
 
+extern Var db_verb_meta(db_verb_handle);
+extern void db_set_verb_meta(db_verb_handle, Var);
+
 extern unsigned db_verb_flags(db_verb_handle);
 extern void db_set_verb_flags(db_verb_handle, unsigned);
 
@@ -663,6 +668,9 @@ extern void db_delete_verb(db_verb_handle);
 				 * db_verb_handle may not be used again after
 				 * this call returns.
 				 */
+
+extern Var make_call(Objid, const char*);
+extern bool destroy_call(Var);
 
 extern void db_fixup_owners(const Objid obj);
                 /* Find all objects, verbs, and properties

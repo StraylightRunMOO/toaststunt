@@ -1,10 +1,14 @@
 #include <string_view>
 #include <vector>
+#include <cstring>
 
+#include "db.h"
+#include "db_private.h"
 #include "structures.h"
 #include "list.h"
 #include "log.h"
 #include "map.h"
+#include "numbers.h"
 #include "utils.h"
 #include "dependencies/xxhash.h"
 
@@ -12,6 +16,15 @@ static inline Var& err(enum error e) {
   static Var err_;
   err_ = Var::new_err(e);
   return std::ref(err_);
+}
+
+Var get_call(Var obj, Var verb) {
+  Var c = make_call(obj.obj(), verb.v.str);
+  
+  if(db_verb_definer(*c.v.call).obj() != obj.obj())
+    c.v.call->oid = obj.obj();
+
+  return c;
 }
 
 static inline std::vector<Var> var_to_vec(Var v) {
@@ -45,15 +58,15 @@ Var::Var() : v({.num = 0}), type(TYPE_NONE) {}
 
 // copy constructors
 Var::Var(const Var& other) : v(other.v), type(other.type) {}
-Var::Var(const std::vector<Var>& other) { *this = var_from_vec(other); }
+//Var::Var(const std::vector<Var>& other) { *this = var_from_vec(other); }
 
 // copy assignment operator
 Var& Var::operator=(Var& other) {
   if(this == &other)
     return *this;
 
-  this->v = std::move(other.v);
-  this->type = other.type;
+  (*this).v = other.v;
+  (*this).type = other.type;
 
   return *this;
 }
@@ -63,9 +76,9 @@ Var& Var::operator=(const Var& other) {
   if(this == &other)
     return *this;
 
-  this->v = std::move(other.v);
-  this->type = other.type;
-
+  (*this).v = other.v;
+  (*this).type = other.type;
+  
   return *this;
 }
 
@@ -74,8 +87,7 @@ Var& Var::operator=(Var&& other) {
   if(this == &other)
     return *this;
 
-  std::swap(this->v, other.v);
-  std::swap(this->type, other.type);
+  *this = other;
   
   return *this;
 }
@@ -143,7 +155,7 @@ inline Var& Var::__index(Num i) {
 
 Num Var::length() const {
   if(type == TYPE_LIST) {
-    return list(0)->num();
+    return v.list[0].num();
   } else if(type == TYPE_MAP) {
     return maplength(*this);
   } else if(type == TYPE_STR) {
@@ -153,7 +165,7 @@ Num Var::length() const {
   return 0;
 }
 
-Var& Var::operator[](Num i) { return __index(i); }
+Var& Var::operator[](int i) { return __index(i); }
 
 Var& Var::operator[](Var k) {
   switch(type) {
@@ -170,10 +182,43 @@ Var& Var::operator[](Var k) {
 
 Var& Var::operator[](const char* str) {
   if(type == TYPE_MAP) {
-    return map(Var::new_str(str, true));
+    return map(str_dup_to_var(str));
   }
 
   return ::err(E_TYPE);
+}
+
+Var& Var::operator+=(const Var& rhs)
+{
+  if(this->is_num())
+    *this = do_add(*this, rhs);
+  else if(this->type == TYPE_LIST)
+    *this = (rhs.type == TYPE_LIST) ? listconcat(var_ref(*this), var_dup(rhs)) : listappend(*this, var_dup(rhs));
+  else if(this->type == TYPE_STR) {
+    auto len1 = memo_strlen(this->v.str);
+    auto len2 = memo_strlen(rhs.v.str);
+
+    /*
+    char *str = (char*)mymalloc(len1 + len2 + 1, M_STRING);
+    strncpy(str, this->v.str, len1);
+    strncat(str, rhs.v.str, len2);
+
+    free_str(this->v.str);
+    this->v.str_ = str;
+    */
+
+    (*this).v.str_ = (char *)myrealloc((void*)(*this).v.str, len1 + len2 + 1, M_STRING);
+    strncat((*this).v.str_, rhs.v.str, len2);
+  }
+
+  return *this;
+}
+
+Var& Var::operator+(const Var& rhs)
+{
+  *this += rhs;
+  *this = var_ref(*this);
+  return *this;
 }
 
 Var::operator std::vector<Var>() const {
@@ -183,6 +228,8 @@ Var::operator std::vector<Var>() const {
 Var::operator std::string() const {
   return toliteral(*this);
 }
+
+Var::operator int() const { return num(); };
 
 std::size_t Var::hash() const {
   std::size_t hash;
@@ -208,7 +255,8 @@ std::size_t Var::hash() const {
     break;
   case TYPE_LIST:
     listforeach(*this, [&hash](Var value, int index) -> int {
-      hash ^= (value.hash() ^ ~index);
+      Var key = Var::new_int(index);
+      hash ^= (value.hash() + key.hash());
       return 0;
     });
     break;

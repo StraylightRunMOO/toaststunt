@@ -112,29 +112,30 @@ dbio_read_objid(void)
 const char *
 dbio_read_string(void)
 {
-    static Stream *str = nullptr;
-    static char buffer[1024];
+    static Stream *s = nullptr;
+    static char buffer[4096];
     int len, used_stream = 0;
 
-    if (str == nullptr)
-        str = new_stream(1024);
+    if (s == nullptr)
+        s = new_stream(4096);
 
 try_again:
     fgets(buffer, sizeof(buffer), input);
     len = strlen(buffer);
     if (len == sizeof(buffer) - 1 && buffer[len - 1] != '\n') {
-        stream_add_string(str, buffer);
+        stream_add_string(s, buffer);
         used_stream = 1;
         goto try_again;
     }
-    if (buffer[len - 1] == '\n')
-        buffer[len - 1] = '\0';
+
+    if (buffer[len - 1] == '\n') buffer[len - 1] = '\0';
 
     if (used_stream) {
-        stream_add_string(str, buffer);
-        return reset_stream(str);
-    } else
-        return buffer;
+        stream_add_string(s, buffer);
+        return (dbio_input_version >= DBV_18) ? str_unescape(reset_stream(s), len) : reset_stream(s);
+    } else {
+        return (dbio_input_version >= DBV_18) ? str_unescape(buffer, len) : buffer;
+    }
 }
 
 const char *
@@ -153,70 +154,148 @@ dbio_read_string_intern(void)
 Var
 dbio_read_var(void)
 {
-    int i, l = dbio_read_num();
+    Num i, l = dbio_read_num();
 
     if (l == waif_conversion_type && waif_conversion_type != _TYPE_WAIF)
         return read_waif();
 
     Var r;
-    if (l == (int) TYPE_ANY && dbio_input_version == DBV_Prehistory)
-        l = TYPE_NONE;      /* Old encoding for VM's empty temp register
-                 * and any as-yet unassigned variables.
-                 */
-    r.type = (var_type) l;
+    if (dbio_input_version == DBV_Prehistory && l == TYPE_ANY_OLD)
+        l = TYPE_NONE; // Old encoding for VM's empty temp register and any as-yet unassigned variables.
+    else if(dbio_input_version >= DBV_18) {
+        r.type = (var_type) l;
 
-    switch (l) {
-        case TYPE_CLEAR:
-        case TYPE_NONE:
-            break;
-        case _TYPE_STR:
-            r.v.str = dbio_read_string_intern();
-            r.type = TYPE_STR;
-            break;
-        case TYPE_OBJ:
-        case TYPE_ERR:
-        case TYPE_INT:
-        case TYPE_CATCH:
-        case TYPE_FINALLY:
-            r.v.num = dbio_read_num();
-            break;
-        case _TYPE_FLOAT:
-            r.v.fnum = dbio_read_float();
-            break;
-        case _TYPE_MAP:
-            l = dbio_read_num();
-            r = new_map(0);
-            for (i = 0; i < l; i++) {
-                Var key, value;
-                key = dbio_read_var();
-                value = dbio_read_var();
-                r = mapinsert(r, key, value);
-            }
-            break;
-        case _TYPE_LIST:
-            l = dbio_read_num();
-            r = new_list(l);
-            for (i = 0; i < l; i++)
-                r[i + 1] = dbio_read_var();
-            break;
-        case _TYPE_OBSOLETE:
-            r = dbio_read_var();
-            break;
-        case _TYPE_ANON:
-            r = db_read_anonymous();
-            break;
-        case _TYPE_WAIF:
-            r = read_waif();
-            break;
-        case TYPE_BOOL:
-            r.v.truth = dbio_read_num();
-            break;
-        default:
-            errlog("DBIO_READ_VAR: Unknown type (%d) at DB file pos. %ld\n",
-                   l, ftell(input));
-            r = zero;
-            break;
+        switch (l) {
+            case TYPE_CLEAR:
+            case TYPE_NONE:
+                break;
+            case _TYPE_STR:
+                r.v.str = dbio_read_string_intern();
+                r.type = TYPE_STR;
+                break;
+            case _TYPE_TYPE:
+            case TYPE_ERR:
+            case TYPE_INT:
+            case TYPE_CATCH:
+            case TYPE_FINALLY:
+                r.v.num = dbio_read_num();
+                break;
+            case TYPE_OBJ:
+                r.v.obj = dbio_read_objid();
+                break;
+            case TYPE_FLOAT:
+                r.v.fnum = dbio_read_float();
+                break;
+            case _TYPE_MAP:
+                l = dbio_read_num();
+                r = new_map(0);
+                for (i = 0; i < l; i++) {
+                    Var key, value;
+                    key = dbio_read_var();
+                    value = dbio_read_var();
+                    r = mapinsert(r, key, value);
+                }
+                break;
+            case _TYPE_LIST:
+                l = dbio_read_num();
+                r = new_list(l);
+                for (i = 0; i < l; i++)
+                    r[i + 1] = dbio_read_var();
+                break;
+            case _TYPE_ANON:
+                r = db_read_anonymous();
+                break;
+            case _TYPE_WAIF:
+                r = read_waif();
+                break;
+            case TYPE_BOOL:
+                r.v.truth = dbio_read_num();
+                break;
+            case _TYPE_CALL:
+                r = make_call(dbio_read_objid(), dbio_read_string_intern());
+                break;
+            case TYPE_COMPLEX:
+                r.v.complex = complex_t(static_cast<float>(dbio_read_float()), static_cast<float>(dbio_read_float()));
+                break;
+            default:
+                errlog("DBIO_READ_VAR: Unknown type (%d) at DB file pos. %ld\n", l, ftell(input));
+                r = zero;
+                break;
+        }
+    } else {
+        switch (l) {
+            case TYPE_CLEAR_OLD:
+                r.type = TYPE_CLEAR;
+                break;
+            case TYPE_NONE_OLD:
+                r.type = TYPE_NONE;
+                break;
+            case _TYPE_STR_OLD:
+                r.v.str = dbio_read_string_intern();
+                r.type = TYPE_STR;
+                break;
+            case TYPE_OBJ_OLD:
+                r.type = TYPE_OBJ;
+                r.v.num = dbio_read_num();
+                break;
+            case TYPE_ERR_OLD:
+                r.type = TYPE_ERR;
+                r.v.num = dbio_read_num();
+                break;
+            case TYPE_INT_OLD:
+                r.type = TYPE_INT;
+                r.v.num = dbio_read_num();
+                break;
+            case TYPE_CATCH_OLD:
+                r.type = TYPE_CATCH;
+                r.v.num = dbio_read_num();
+                break;
+            case TYPE_FINALLY_OLD:
+                r.type = TYPE_FINALLY;
+                r.v.num = dbio_read_num();
+                break;
+            case _TYPE_FLOAT_OLD:
+                r.type = TYPE_FLOAT;
+                r.v.fnum = dbio_read_float();
+                break;
+            case _TYPE_MAP_OLD:
+                l = dbio_read_num();
+                r = new_map(0);
+                for (i = 0; i < l; i++) {
+                    Var key, value;
+                    key = dbio_read_var();
+                    value = dbio_read_var();
+                    r = mapinsert(r, key, value);
+                }
+                break;
+            case _TYPE_LIST_OLD:
+                l = dbio_read_num();
+                r = new_list(l);
+                for (i = 0; i < l; i++)
+                    r[i + 1] = dbio_read_var();
+                break;
+            case _TYPE_CALL_OLD:
+                r = dbio_read_var();
+                r.type = TYPE_CALL;
+                break;
+            case _TYPE_ANON_OLD:
+                r = db_read_anonymous();
+                break;
+            case _TYPE_WAIF_OLD:
+                r = read_waif();
+                break;
+            case TYPE_BOOL_OLD:
+                r.type = TYPE_BOOL;
+                r.v.truth = dbio_read_num();
+                break;
+            default:
+                errlog("DBIO_READ_VAR: Unknown type (%d) at DB file pos. %ld\n",
+                       l, ftell(input));
+                r = zero;
+                break;
+        }
     }
+
     return r;
 }
 
@@ -325,35 +404,44 @@ dbio_write_float(double d)
 void
 dbio_write_objid(Objid oid)
 {
-    dbio_write_num(oid);
+    dbio_write_num(is_memento(oid) == 0 ? oid : NOTHING);
 }
 
 void
 dbio_write_string(const char *s)
 {
-    dbio_printf("%s\n", s ? s : "");
+    if(s) {
+        const char *str = str_escape(s, strlen(s));
+        dbio_printf("%s\n", str);
+        free_str(str);
+    } else {
+        dbio_printf("\n");
+    }
 }
 
 void
 dbio_write_var(Var v)
 {
-    int i;
+    uint32_t i;
 
-    dbio_write_num((int) v.type & TYPE_DB_MASK);
+    dbio_write_num(v.type & TYPE_DB_MASK);
 
-    switch ((int) v.type) {
+    switch (v.type) {
         case TYPE_CLEAR:
         case TYPE_NONE:
             break;
         case TYPE_STR:
             dbio_write_string(v.v.str);
             break;
-        case TYPE_OBJ:
+        case _TYPE_TYPE:
         case TYPE_ERR:
         case TYPE_INT:
         case TYPE_CATCH:
         case TYPE_FINALLY:
             dbio_write_num(v.v.num);
+            break;
+        case TYPE_OBJ:
+            dbio_write_objid(v.v.obj);
             break;
         case TYPE_FLOAT:
             dbio_write_float(v.v.fnum);
@@ -379,6 +467,14 @@ dbio_write_var(Var v)
             break;
         case TYPE_BOOL:
             dbio_write_num(v.v.truth);
+            break;
+        case TYPE_CALL:
+            dbio_write_objid(v.v.call->oid);
+            dbio_write_string(v.v.call->verbname);
+            break;
+        case TYPE_COMPLEX:
+            dbio_write_float(v.v.complex.real());
+            dbio_write_float(v.v.complex.imag());
             break;
         default:
             errlog("DBIO_WRITE_VAR: Unknown type (%d)\n", (int)v.type);

@@ -31,6 +31,7 @@
 #include "db_tune.h"
 #include "list.h"
 #include "log.h"
+#include "map.h"
 #include "parse_cmd.h"
 #include "program.h"
 #include "server.h"
@@ -210,6 +211,11 @@ db_add_verb(Var obj, const char *vnames, Objid owner, unsigned flags,
     newv = (Verbdef *)mymalloc(sizeof(Verbdef), M_VERBDEF);
     newv->name = vnames;
     newv->owner = owner;
+    
+    Var meta;
+    meta.type = TYPE_NONE;
+    newv->meta = meta;
+    
     newv->perms = flags | (dobj << DOBJSHIFT) | (iobj << IOBJSHIFT);
     newv->prep = prep;
     newv->next = nullptr;
@@ -269,15 +275,15 @@ db_for_all_verbs(Var obj,
  * work.  See `db_verb_definer' for the consequence of this decision.
  */
 typedef struct {        /* non-null db_verb_handles point to these */
-    Object *definer;
+    Var definer;
     Verbdef *verbdef;
-} handle;
+} verb_handle;
 
 void
 db_delete_verb(db_verb_handle vh)
 {
-    handle *h = (handle *)vh.ptr;
-    Object *o = h->definer;
+    verb_handle *h = (verb_handle *)vh.ptr;
+    Object *o = dbpriv_find_object(h->definer.obj());
     Verbdef *v = h->verbdef;
     Verbdef *vv;
 
@@ -305,7 +311,7 @@ db_find_command_verb(Objid oid, const char *verb,
 {
     Object *o;
     Verbdef *v;
-    static handle h;
+    static verb_handle h;
     db_verb_handle vh;
 
     Var ancestors;
@@ -324,7 +330,7 @@ db_find_command_verb(Objid oid, const char *verb,
                     && (vdobj == ASPEC_ANY || vdobj == dobj)
                     && (v->prep == PREP_ANY || v->prep == prep)
                     && (viobj == ASPEC_ANY || viobj == iobj)) {
-                h.definer = o;
+                h.definer = ancestor;
                 h.verbdef = v;
                 vh.ptr = &h;
 
@@ -343,11 +349,11 @@ db_find_command_verb(Objid oid, const char *verb,
 }
 
 #ifdef VERB_CACHE
-int db_verb_generation = 0;
 
-int verbcache_hit = 0;
-int verbcache_neg_hit = 0;
-int verbcache_miss = 0;
+int db_verb_generation = 0;
+int verbcache_hit      = 0;
+int verbcache_neg_hit  = 0;
+int verbcache_miss     = 0;
 
 typedef struct vc_entry vc_entry;
 
@@ -358,7 +364,7 @@ struct vc_entry {
 #endif
     Object *object;
     char *verbname;
-    handle h;
+    verb_handle h;
     struct vc_entry *next;
 };
 
@@ -425,14 +431,11 @@ db_verb_cache_stats(void)
     }
 
     v = new_list(5);
-    v[1].type = TYPE_INT;
-    v[1].v.num = verbcache_hit;
-    v[2].type = TYPE_INT;
-    v[2].v.num = verbcache_neg_hit;
-    v[3].type = TYPE_INT;
-    v[3].v.num = verbcache_miss;
-    v[4].type = TYPE_INT;
-    v[4].v.num = db_verb_generation;
+    v[1] = Var::new_int(verbcache_hit);
+    v[2] = Var::new_int(verbcache_neg_hit);
+    v[3] = Var::new_int(verbcache_miss);
+    v[4] = Var::new_int(db_verb_generation);
+
     vv = (v[5] = new_list(VC_CACHE_STATS_MAX + 1));
     for (i = 0; i < VC_CACHE_STATS_MAX + 1; i++) {
         vv[i + 1].type = TYPE_INT;
@@ -534,7 +537,7 @@ db_find_callable_verb(Var recv, const char *verb)
 #ifdef VERB_CACHE
     vc_entry *new_vc;
 #else
-    static handle h;
+    static verb_handle h;
 #endif
     db_verb_handle vh;
 
@@ -547,8 +550,8 @@ db_find_callable_verb(Var recv, const char *verb)
      * with verbs, and then try to find the verb starting at that
      * point.
      */
-    Var stack = new_list(0);
-    stack = listappend(stack, var_ref(recv));
+    Var stack = new_list(1);
+    stack[1] = var_ref(recv);
 
 try_again:
     while (listlength(stack) > 0) {
@@ -641,11 +644,11 @@ try_again:
 #ifdef VERB_CACHE
             free_var(stack);
 
-            new_vc->h.definer = data.o;
+            new_vc->h.definer = Var::new_obj(data.o->id);
             new_vc->h.verbdef = data.v;
             vh.ptr = &new_vc->h;
 #else
-            h.definer = data.o;
+            h.definer = Var::new_obj(data.o->id);
             h.verbdef = data.v;
             vh.ptr = &h;
 #endif
@@ -667,6 +670,30 @@ try_again:
     return vh;
 }
 
+Var make_call(Objid o, const char *vname) {
+    db_verb_handle h = db_find_callable_verb(Var::new_obj(o), vname);
+    db_verb_handle *vh = (db_verb_handle*)mymalloc(sizeof(db_verb_handle), M_CALL);
+
+    vh->ptr = h.ptr;
+    vh->oid = o;
+    vh->verbname = str_dup(vname);
+    
+    Var c;
+    c.type = TYPE_CALL;
+    c.v.call = vh;
+    return c;
+}
+
+bool destroy_call(Var c) {
+    db_verb_handle *h = c.v.call;
+    if(h->verbname == nullptr)
+        oklog("not freeing un-initialized verb_handle->verbname\n");
+    else
+        free_str(h->verbname);
+
+    return true;
+}
+
 db_verb_handle
 db_find_defined_verb(Var obj, const char *vname, int allow_numbers)
 {
@@ -674,7 +701,7 @@ db_find_defined_verb(Var obj, const char *vname, int allow_numbers)
     Verbdef *v;
     char *p;
     int num, i;
-    static handle h;
+    static verb_handle h;
     db_verb_handle vh;
 
     if (!allow_numbers ||
@@ -687,7 +714,7 @@ db_find_defined_verb(Var obj, const char *vname, int allow_numbers)
             break;
 
     if (v) {
-        h.definer = o;
+        h.definer = obj;
         h.verbdef = v;
         vh.ptr = &h;
 
@@ -704,12 +731,12 @@ db_find_indexed_verb(Var obj, unsigned index)
     Object *o = dbpriv_dereference(obj);
     Verbdef *v;
     unsigned i;
-    static handle h;
+    static verb_handle h;
     db_verb_handle vh;
 
     for (v = o->verbdefs, i = 0; v; v = v->next)
         if (++i == index) {
-            h.definer = o;
+            h.definer = obj;
             h.verbdef = v;
             vh.ptr = &h;
 
@@ -723,41 +750,22 @@ db_find_indexed_verb(Var obj, unsigned index)
 Var
 db_verb_definer(db_verb_handle vh)
 {
-    Var r;
-    handle *h = (handle *) vh.ptr;
-
-    if (h && h->definer) {
-        if (h->definer->id > NOTHING) {
-            r.type = TYPE_OBJ;
-            r.v.obj = h->definer->id;
-        }
-        else {
-            r.type = TYPE_ANON;
-            r.v.anon = h->definer;
-        }
-        return r;
-    }
-
-    panic_moo("DB_VERB_DEFINER: Null handle!");
+    verb_handle *h = (verb_handle *) vh.ptr;
+    Var r = h ? h->definer : Var::new_obj(-1);
     return r;
 }
 
 const char *
 db_verb_names(db_verb_handle vh)
 {
-    handle *h = (handle *) vh.ptr;
-
-    if (h)
-        return h->verbdef->name;
-
-    panic_moo("DB_VERB_NAMES: Null handle!");
-    return nullptr;
+    verb_handle *h = (verb_handle*)vh.ptr;
+    return h ? h->verbdef->name : "";
 }
 
 void
 db_set_verb_names(db_verb_handle vh, const char *names)
 {
-    handle *h = (handle *) vh.ptr;
+    verb_handle *h = (verb_handle *) vh.ptr;
 
     db_priv_affected_callable_verb_lookup();
 
@@ -766,48 +774,127 @@ db_set_verb_names(db_verb_handle vh, const char *names)
             free_str(h->verbdef->name);
         h->verbdef->name = names;
     } else
-        panic_moo("DB_SET_VERB_NAMES: Null handle!");
+        panic_moo("DB_SET_VERB_NAMES: Null verb_handle!");
 }
 
 Objid
 db_verb_owner(db_verb_handle vh)
 {
-    handle *h = (handle *) vh.ptr;
+    verb_handle *h = (verb_handle *) vh.ptr;
 
     if (h)
         return h->verbdef->owner;
 
-    panic_moo("DB_VERB_OWNER: Null handle!");
+    panic_moo("DB_VERB_OWNER: Null verb_handle!");
     return 0;
 }
 
 void
 db_set_verb_owner(db_verb_handle vh, Objid owner)
 {
-    handle *h = (handle *) vh.ptr;
+    verb_handle *h = (verb_handle *) vh.ptr;
 
     if (h)
         h->verbdef->owner = owner;
     else
-        panic_moo("DB_SET_VERB_OWNER: Null handle!");
+        panic_moo("DB_SET_VERB_OWNER: Null verb_handle!");
+}
+
+Var
+db_verb_meta(db_verb_handle vh)
+{
+    verb_handle *h = (verb_handle *) vh.ptr;
+
+    if (h) {
+        if(h->verbdef->meta.type == TYPE_MAP) {
+            return h->verbdef->meta;
+        } else if(h->verbdef->meta.type == TYPE_LIST && h->verbdef->meta.length() > 0) {
+            Var m = new_map(h->verbdef->meta.length());
+            listforeach(h->verbdef->meta, [&m](Var value, int index) -> int {
+                if(value.type != TYPE_LIST || value.length() <= 1)
+                    m = mapinsert(m, Var::new_int(index), var_ref(value));
+                else if(value.length() == 2)
+                    m = mapinsert(m, var_ref(value[1]), var_ref(value[2]));
+                else
+                    m = mapinsert(m, var_ref(value[1]), sublist(var_ref(value), 2, value.length()));
+                return 0;
+            });
+
+            return m;
+        } else {
+            return new_map(0);
+        }
+    }
+
+    panic_moo("DB_VERB_META: Null verb_handle!");
+    return Var::new_int(0);
+}
+
+void
+db_set_verb_meta(db_verb_handle vh, Var meta)
+{
+    verb_handle *h = (verb_handle *) vh.ptr;
+
+    if (!h) return panic_moo("DB_SET_VERB_META: Null verb_handle!");
+
+    free_var(h->verbdef->meta);
+
+    switch(meta.type) {
+        case TYPE_INT:
+        case TYPE_OBJ:
+        case TYPE_ERR:
+        case TYPE_FLOAT:
+        case TYPE_COMPLEX:
+        case TYPE_MATRIX:
+        case TYPE_CALL:
+        case TYPE_STR:
+        case TYPE_BOOL:
+        case TYPE_ANON:
+        case TYPE_WAIF:
+        {
+            h->verbdef->meta = enlist_var(var_ref(meta));
+            break;
+        }
+        case TYPE_LIST:
+        case TYPE_MAP:
+        {
+            Var m;
+            if(meta.length() > 0) {
+                m = var_ref(meta);
+            } else {                
+                m.type = TYPE_NONE;
+            }
+            h->verbdef->meta = m;
+            break;
+        }
+        default:
+        {
+            Var m;
+            m.type = TYPE_NONE;
+            h->verbdef->meta = m;
+            break;
+        }
+    }
+
+    free_var(meta);
 }
 
 unsigned
 db_verb_flags(db_verb_handle vh)
 {
-    handle *h = (handle *) vh.ptr;
+    verb_handle *h = (verb_handle *) vh.ptr;
 
     if (h)
         return h->verbdef->perms & PERMMASK;
 
-    panic_moo("DB_VERB_FLAGS: Null handle!");
+    panic_moo("DB_VERB_FLAGS: Null verb_handle!");
     return 0;
 }
 
 void
 db_set_verb_flags(db_verb_handle vh, unsigned flags)
 {
-    handle *h = (handle *) vh.ptr;
+    verb_handle *h = (verb_handle *) vh.ptr;
 
     db_priv_affected_callable_verb_lookup();
 
@@ -815,55 +902,55 @@ db_set_verb_flags(db_verb_handle vh, unsigned flags)
         h->verbdef->perms &= ~PERMMASK;
         h->verbdef->perms |= flags;
     } else
-        panic_moo("DB_SET_VERB_FLAGS: Null handle!");
+        panic_moo("DB_SET_VERB_FLAGS: Null verb_handle!");
 }
 
 Program *
 db_verb_program(db_verb_handle vh)
 {
-    handle *h = (handle *) vh.ptr;
+    verb_handle *h = (verb_handle *) vh.ptr;
 
     if (h) {
         Program *p = h->verbdef->program;
 
         return p ? p : null_program();
     }
-    panic_moo("DB_VERB_PROGRAM: Null handle!");
+    panic_moo("DB_VERB_PROGRAM: Null verb_handle!");
     return nullptr;
 }
 
 void
 db_set_verb_program(db_verb_handle vh, Program * program)
 {
-    handle *h = (handle *) vh.ptr;
+    verb_handle *h = (verb_handle *) vh.ptr;
 
     if (h) {
         if (h->verbdef->program)
             free_program(h->verbdef->program);
         h->verbdef->program = program;
     } else
-        panic_moo("DB_SET_VERB_PROGRAM: Null handle!");
+        panic_moo("DB_SET_VERB_PROGRAM: Null verb_handle!");
 }
 
 void
 db_verb_arg_specs(db_verb_handle vh,
                   db_arg_spec * dobj, db_prep_spec * prep, db_arg_spec * iobj)
 {
-    handle *h = (handle *) vh.ptr;
+    verb_handle *h = (verb_handle *) vh.ptr;
 
     if (h) {
         *dobj = (db_arg_spec)((h->verbdef->perms >> DOBJSHIFT) & OBJMASK);
         *prep = (db_prep_spec)h->verbdef->prep;
         *iobj = (db_arg_spec)((h->verbdef->perms >> IOBJSHIFT) & OBJMASK);
     } else
-        panic_moo("DB_VERB_ARG_SPECS: Null handle!");
+        panic_moo("DB_VERB_ARG_SPECS: Null verb_handle!");
 }
 
 void
 db_set_verb_arg_specs(db_verb_handle vh,
                       db_arg_spec dobj, db_prep_spec prep, db_arg_spec iobj)
 {
-    handle *h = (handle *) vh.ptr;
+    verb_handle *h = (verb_handle *) vh.ptr;
 
     db_priv_affected_callable_verb_lookup();
 
@@ -873,7 +960,7 @@ db_set_verb_arg_specs(db_verb_handle vh,
                              | (iobj << IOBJSHIFT));
         h->verbdef->prep = prep;
     } else
-        panic_moo("DB_SET_VERB_ARG_SPECS: Null handle!");
+        panic_moo("DB_SET_VERB_ARG_SPECS: Null verb_handle!");
 }
 
 int

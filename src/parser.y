@@ -25,6 +25,7 @@
 #include "my-math.h"
 #include <stdlib.h>
 #include <string.h>
+#include <memory.h>
 #include "ast.h"
 #include "code_gen.h"
 #include "config.h"
@@ -93,6 +94,7 @@ static void     check_loop_name(const char *, enum loop_exit_kind);
 %token  <integer> tINTEGER
 %token  <object> tOBJECT
 %token  <real> tFLOAT
+%token  <real> tCOMPLEX
 %token  <string> tSTRING tID
 %token  <error> tERROR
 %token  tIF tELSE tELSEIF tENDIF tFOR tIN tENDFOR tRETURN tFORK tENDFORK
@@ -138,7 +140,6 @@ statements:
 statement:
 	  tIF '(' expr ')' statements elseifs elsepart tENDIF
 		{
-
 		    $$ = alloc_stmt(STMT_COND);
 		    $$->s.cond.arms = alloc_cond_arm($3, $5);
 		    $$->s.cond.arms->next = $6;
@@ -347,14 +348,12 @@ except:
 	  opt_id '(' codes ')' statements
 		{ $$ = alloc_except($1 ? find_id($1) : -1, $3, $5); }
 	;
-
 opt_id:
 	  /* NOTHING */
 		{ $$ = 0; }
 	| tID
 		{ $$ = $1; }
 	;
-
 expr:
 	  tINTEGER
 		{
@@ -366,6 +365,11 @@ expr:
 		    $$ = alloc_var(TYPE_FLOAT);
 		    $$->e.var.v.fnum = $1;
 		}
+	| tCOMPLEX
+	{
+		$$ = alloc_var(TYPE_COMPLEX);
+		$$->e.var.v.complex = complex_t(0.0, $1);
+	}
 	| tSTRING
 		{
 		    $$ = alloc_var(TYPE_STR);
@@ -402,17 +406,33 @@ expr:
 		    prop->e.var.v.str = $3;
 		    $$ = alloc_binary(EXPR_PROP, $1, prop);
 		}
+	| expr ':' ':' tID
+	{
+			Expr *e = $1;
+
+			if ((e->kind == EXPR_VAR && e->e.var.type == TYPE_OBJ) || e->kind == EXPR_ID || e->kind == EXPR_PROP || e->kind == EXPR_VERB) {
+				Expr *verb = alloc_var(TYPE_STR);
+				verb->e.var.v.str = $4;
+				$$ = alloc_call_handle($1, verb);
+			} else {
+				yyerror("Invalid call handle expression: not an object.");
+			}
+	}
+	| expr ':' ':' '(' expr ')'
+		{
+		    $$ = alloc_call_handle($1, $5);
+		}
 	| expr '.' ':' tID
 		{
-            /* Treat foo.:bar (waif properties) like foo.(":bar") 
-               (we should be using  WAIF_PROP_PREFIX here...) */
-		    Expr *prop = alloc_var(TYPE_STR);
+	    /* Treat foo.:bar (waif properties) like foo.(":bar") 
+	       (we should be using  WAIF_PROP_PREFIX here...) */
+		  Expr *prop = alloc_var(TYPE_STR);
 			char *newstr;
-            asprintf(&newstr, "%c%s", WAIF_PROP_PREFIX, $4);
+      asprintf(&newstr, "%c%s", WAIF_PROP_PREFIX, $4);
 			dealloc_string($4);
-		    prop->e.var.v.str = alloc_string(newstr);
+		  prop->e.var.v.str = alloc_string(newstr);
 			free(newstr);
-		    $$ = alloc_binary(EXPR_PROP, $1, prop);
+		  $$ = alloc_binary(EXPR_PROP, $1, prop);
 		}
 	| expr '.' '(' expr ')'
 		{
@@ -453,38 +473,41 @@ expr:
 		}
 	| '^'
 		{
-		    if (!dollars_ok)
+			if (!dollars_ok)
 			yyerror("Illegal context for `^' expression.");
-		    $$ = alloc_expr(EXPR_FIRST);
+			$$ = alloc_expr(EXPR_FIRST);
 		}
 	| '$'
 		{
-		    if (!dollars_ok)
+			if (!dollars_ok)
 			yyerror("Illegal context for `$' expression.");
-		    $$ = alloc_expr(EXPR_LAST);
+			$$ = alloc_expr(EXPR_LAST);
 		}
 	| expr '=' expr
-                {
-		    Expr *e = $1;
+  	{
+	    Expr *e = $1;
 
-		    if (e->kind == EXPR_LIST) {
-			e->kind = EXPR_SCATTER;
-			if (e->e.list) {
-			    e->e.scatter = scatter_from_arglist(e->e.list);
-			    vet_scatter(e->e.scatter);
-			} else
-			    yyerror("Empty list in scattering assignment.");
-		    } else {
-			if (e->kind == EXPR_RANGE)
-			    e = e->e.range.base;
-			while (e->kind == EXPR_INDEX)
-			    e = e->e.bin.lhs;
-			if (e->kind != EXPR_ID  &&  e->kind != EXPR_PROP)
-			    yyerror("Illegal expression on left side of"
-				    " assignment.");
+	    if (e->kind == EXPR_LIST) {
+				e->kind = EXPR_SCATTER;
+				if (e->e.list) {
+		    	e->e.scatter = scatter_from_arglist(e->e.list);
+		    	vet_scatter(e->e.scatter);
+				} else {
+		    	yyerror("Empty list in scattering assignment.");
 		    }
-		    $$ = alloc_binary(EXPR_ASGN, $1, $3);
-	        }
+	    } else {
+				if (e->kind == EXPR_RANGE)
+		    	e = e->e.range.base;
+				
+				while (e->kind == EXPR_INDEX)
+		  		e = e->e.bin.lhs;
+		
+				if (e->kind != EXPR_ID  &&  e->kind != EXPR_PROP)
+		    	yyerror("Illegal expression on left side of assignment.");
+	    }
+	    
+	    $$ = alloc_binary(EXPR_ASGN, $1, $3);
+		}
 	| '{' scatter '}' '=' expr
 		{
 		    Expr       *e = alloc_expr(EXPR_SCATTER);
@@ -498,20 +521,61 @@ expr:
 		    unsigned f_no;
 
 		    $$ = alloc_expr(EXPR_CALL);
-		    if ((f_no = number_func_by_name($1)) == FUNC_NOT_FOUND) {
-			/* Replace with call_function("$1", @args) */
-			Expr           *fname = alloc_var(TYPE_STR);
-			Arg_List       *a = alloc_arg_list(ARG_NORMAL, fname);
 
-			fname->e.var.v.str = $1;
-			a->next = $3;
-			warning("Unknown built-in function: ", $1);
-			$$->e.call.func = number_func_by_name("call_function");
-			$$->e.call.args = a;
+		    if(strcmp($1, "tonum") == 0) {
+		    	warning($1, "() has been deprecated. Use toint() instead.");
+
+		    	$$->e.call.func = number_func_by_name("toint");
+		    	$$->e.call.args = $3;
+		    } else if(strcmp($1, "atan2") == 0) {
+		    	warning($1, "() has been deprecated. Use atan() instead.");
+
+		    	$$->e.call.func = number_func_by_name("atan");
+		    	$$->e.call.args = $3;
+		    } else if(strcmp($1,"chparent") == 0) {
+		    	warning($1, "() has been deprecated. Use chparent() instead.");
+
+		    	$$->e.call.func = number_func_by_name("chparents");
+		    	$$->e.call.args = $3;
+		    } else if(strcmp($1, "parent") == 0 && strlen($1) == 6) {
+		    	warning($1, "() has been deprecated. Use parents() instead.");
+
+		    	Expr *c = alloc_expr(EXPR_CALL);
+		    	c->e.call.func = number_func_by_name("parents");
+		    	c->e.call.args = $3;
+
+					Expr *idx = alloc_var(TYPE_INT);
+		    	idx->e.var.v.num = 1;
+
+		    	Expr *e = alloc_var(TYPE_OBJ);
+		    	e->e.var.v.obj = -1;
+
+		    	$$ = alloc_expr(EXPR_CATCH);
+		    	$$->e._catch._try = alloc_binary(EXPR_INDEX, c, idx);
+		    	$$->e._catch.codes = 0;
+		    	$$->e._catch.except = e;
+
+		    } else if(strcmp($1, "reverse") == 0) {
+		    	warning($1, "() has been deprecated. Use the range operator [$..^] instead.");
+
+		    	$$ = alloc_expr(EXPR_RANGE);
+		    	$$->e.range.base = $3->expr;
+		    	$$->e.range.from = alloc_expr(EXPR_LAST);
+		    	$$->e.range.to = alloc_expr(EXPR_FIRST);
+		    } else if ((f_no = number_func_by_name($1)) == FUNC_NOT_FOUND) {
+					warning("Unknown built-in function: ", $1);
+
+					/* Replace with call_function("$1", @args) */
+					Expr           *fname = alloc_var(TYPE_STR);
+					Arg_List       *a = alloc_arg_list(ARG_NORMAL, fname);
+
+					fname->e.var.v.str = $1;
+					$$->e.call.func = number_func_by_name("call_function");
+					$$->e.call.args = a;
 		    } else {
-			$$->e.call.func = f_no;
-			$$->e.call.args = $3;
-			dealloc_string($1);
+					$$->e.call.func = f_no;
+					$$->e.call.args = $3;
+					dealloc_string($1);
 		    }
 		}
 	| expr '+' expr
@@ -596,24 +660,23 @@ expr:
 		}
 	| '-' expr  %prec tUNARYMINUS
 		{
-		    if ($2->kind == EXPR_VAR
-			&& ($2->e.var.type == TYPE_INT
-			    || $2->e.var.type == TYPE_FLOAT)) {
-			switch ($2->e.var.type) {
-			  case TYPE_INT:
-			    $2->e.var.v.num = -$2->e.var.v.num;
-			    break;
-			  case TYPE_FLOAT:
-			    $2->e.var.v.fnum = -$2->e.var.v.fnum;
-			    break;
-			  default:
-			    break;
-			}
-		        $$ = $2;
-		    } else {
-			$$ = alloc_expr(EXPR_NEGATE);
-			$$->e.expr = $2;
-		    }
+	    if ($2->kind == EXPR_VAR && ($2->e.var.type == TYPE_INT || $2->e.var.type == TYPE_FLOAT)) {
+				switch ($2->e.var.type) {
+		  	case TYPE_INT:
+		    	$2->e.var.v.num = -$2->e.var.v.num;
+		    	break;
+		  	case TYPE_FLOAT:
+		    	$2->e.var.v.fnum = -$2->e.var.v.fnum;
+		    	break;
+		  	default:
+		    	break;
+				}
+	      
+	      $$ = $2;
+	    } else {
+				$$ = alloc_expr(EXPR_NEGATE);
+				$$->e.expr = $2;
+	    }
 		}
 	| '!' expr
 		{
@@ -637,6 +700,12 @@ expr:
 		    $$ = alloc_expr(EXPR_MAP);
 		    $$->e.map = $2;
 		}
+
+	| '[' '{' arglist '}' ']'
+	{
+		$$ = alloc_expr(EXPR_LIST);
+		$$->e.list = $3;
+	}
 	| '[' ']'
 		{
 		    /* [] is the expression for an empty map */
@@ -658,12 +727,10 @@ expr:
 		    $$->e._catch.except = $5;
 		}
 	;
-
 dollars_up:
 	  /* NOTHING */
 		{ dollars_ok++; }
 	;
-
 codes:
 	  tANY
 		{ $$ = 0; }
@@ -882,10 +949,10 @@ yylex(void)
 start_over:
 
     do {
-	c = lex_getc();
-	if (c == '\n') lineno++;
+			c = lex_getc();
+			if (c == '\n') lineno++;
     } while (isspace(c));
-
+   
     if (c == '/') {
 	c = lex_getc();
 	if (c == '*') {
@@ -941,25 +1008,38 @@ start_over:
 	    c = lex_getc();
 	}
 
+	if(c == 'i') {
+		type = tCOMPLEX;
+		c = lex_getc();
+	}
+
 	if (language_version >= DBV_Float && c == '.') {
 	    /* maybe floating-point (but maybe `..') */
 	    int cc;
 
 	    lex_ungetc(cc = lex_getc()); /* peek ahead */
 	    if (isdigit(cc)) {  /* definitely floating-point */
-		type = tFLOAT;
-		do {
-		    stream_add_char(token_stream, c);
-		    c = lex_getc();
-		} while (isdigit(c));
+				do {
+		    	stream_add_char(token_stream, c);
+		    	c = lex_getc();
+				} while (isdigit(c));
+				type = c != 'i' ? tFLOAT : tCOMPLEX;
+
+				if(c != 'i') {
+					type = tFLOAT;
+				} else {
+					type = tCOMPLEX;
+					c = lex_getc();
+				}
+
 	    } else if (stream_length(token_stream) == 0) {
-		/* no digits before or after `.'; not a number at all */
-		goto normal_dot;
+				/* no digits before or after `.'; not a number at all */
+				goto normal_dot;
 	    } else if (cc != '.') {
-		/* some digits before dot, not `..' */
-		type = tFLOAT;
-		stream_add_char(token_stream, c);
-		c = lex_getc();
+				/* some digits before dot, not `..' */
+				type = tFLOAT;
+				stream_add_char(token_stream, c);
+				c = lex_getc();
 	    }
 	}
 
@@ -969,36 +1049,47 @@ start_over:
 	    stream_add_char(token_stream, c);
 	    c = lex_getc();
 	    if (c == '+' || c == '-') {
-		stream_add_char(token_stream, c);
-		c = lex_getc();
+				stream_add_char(token_stream, c);
+				c = lex_getc();
 	    }
 	    if (!isdigit(c)) {
-		yyerror("Malformed floating-point literal");
-		lex_ungetc(c);
-		return 0;
+				yyerror("Malformed floating-point literal");
+				lex_ungetc(c);
+				return 0;
 	    }
 	    do {
-		stream_add_char(token_stream, c);
-		c = lex_getc();
+				stream_add_char(token_stream, c);
+				c = lex_getc();
 	    } while (isdigit(c));
 	}
-	
+
 	lex_ungetc(c);
 
 	if (type == tINTEGER)
 	    yylval.integer = n;
-	else {
+	else if(type == tCOMPLEX) {
+		double d;
+		d = strtod(reset_stream(token_stream), 0);
+		if (!IS_REAL(d)) {
+			yyerror("Floating-point literal out of range");
+			d = 0.0;
+		}
+
+		yylval.real = d; 
+	} else {
 	    double	d;
 	    
 	    d = strtod(reset_stream(token_stream), 0);
 	    if (!IS_REAL(d)) {
-		yyerror("Floating-point literal out of range");
-		d = 0.0;
+				yyerror("Floating-point literal out of range");
+				d = 0.0;
 	    }
+
 	    yylval.real = d; 
 	}
+	
 	return type;
-    }
+  }
     
     if (isalpha(c) || c == '_') {
 	char	       *buf;
@@ -1167,6 +1258,7 @@ suspend_loop_scope(void)
     entry->is_barrier = 1;
     loop_stack = entry;
 }
+
 
 static void
 resume_loop_scope(void)

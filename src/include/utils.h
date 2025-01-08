@@ -45,14 +45,14 @@ extern void aux_free(Var);
 static inline void
 free_var(Var v)
 {
-    if (v.is_complex())
-	complex_free_var(v);
+    if (v.is_pointer() && (v.type != TYPE_LIST || v.length() > 0))
+	   complex_free_var(v);
 }
 
 static inline Var
 var_ref(Var v)
 {
-    if (v.is_complex())
+    if (v.is_pointer())
 	return complex_var_ref(v);
     else
 	return v;
@@ -61,7 +61,7 @@ var_ref(Var v)
 static inline Var
 var_dup(Var v)
 {
-    if (v.is_complex())
+    if (v.is_pointer())
 	return complex_var_dup(v);
     else
 	return v;

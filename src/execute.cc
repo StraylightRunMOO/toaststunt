@@ -705,35 +705,17 @@ call_verb2(Objid recv, const char *vname, Var _this, Var args, int do_pass, bool
         if (!is_valid(RUN_ACTIV.vloc))
             return E_INVIND;
 
-        Var parents = db_object_parents2(RUN_ACTIV.vloc);
+        Var ancestors = db_ancestors(RUN_ACTIV.vloc, false);
+        
+        listforeach(ancestors, [&h, &vname](Var value, int index) -> int {
+            h = db_find_callable_verb(value, vname);
+            return (h.ptr) ? 1 : 0;
+        });
 
-        if (TYPE_LIST == parents.type) {
-            if (listlength(parents) == 0)
-                return E_INVIND;
-            /* Loop over each parent, looking for the first parent
-             * that defines a suitable verb that we can pass to.
-             */
-            Var parent;
-            int i, c;
-            FOR_EACH(parent, parents, i, c) {
-                where = parent.v.obj;
-                h = db_find_callable_verb(Var::new_obj(where), vname);
-                if (h.ptr)
-                    break;
-            }
-        }
-        else if (TYPE_OBJ == parents.type) {
-            /* Look for a suitable verb on the parent, if the parent
-             * is valid.
-             */
-            where = parents.v.obj;
-            if (!valid(where))
-                return E_INVIND;
-            h = db_find_callable_verb(Var::new_obj(where), vname);
-        }
-        else {
+        free_var(ancestors);
+
+        if(!h.ptr)
             return E_VERBNF;
-        }
     }
     else {
         if (TYPE_ANON == _this.type && is_valid(_this))
@@ -782,6 +764,7 @@ call_verb2(Objid recv, const char *vname, Var _this, Var args, int do_pass, bool
     ENV_COPY(SLOT_PREPSTR);
     ENV_COPY(SLOT_IOBJ);
     ENV_COPY(SLOT_IOBJSTR);
+    ENV_COPY(SLOT_CMDSTR);
 
     if (is_wizard(CALLER_ACTIV.progr) &&
             (CALLER_ACTIV.rt_env[SLOT_PLAYER].type == TYPE_OBJ))
@@ -1316,8 +1299,8 @@ do_test:
 
                 rhs = POP();
                 lhs = POP();
-                ans.type = TYPE_INT;
-                ans.v.num = (op == OP_EQ
+                ans.type = TYPE_BOOL;
+                ans.v.truth = (op == OP_EQ
                              ? equality(rhs, lhs, 0)
                              : !equality(rhs, lhs, 0));
                 PUSH(ans);
@@ -1336,8 +1319,8 @@ do_test:
 
                 rhs = POP();
                 lhs = POP();
-                if ((lhs.type == TYPE_INT || lhs.type == TYPE_FLOAT)
-                        && (rhs.type == TYPE_INT || rhs.type == TYPE_FLOAT)) {
+
+                if (lhs.is_num() && rhs.is_num()) {
                     ans = compare_numbers(lhs, rhs);
                     if (ans.type == TYPE_ERR) {
                         free_var(rhs);
@@ -1435,8 +1418,8 @@ finish_comparison:
 
                 rhs = POP();    /* should be number */
                 lhs = POP();    /* should be number */
-                if ((lhs.type == TYPE_INT || lhs.type == TYPE_FLOAT)
-                        && (rhs.type == TYPE_INT || rhs.type == TYPE_FLOAT)) {
+
+                if (lhs.is_num() && rhs.is_num()) {
                     switch (op) {
                         case OP_MULT:
                             ans = do_multiply(lhs, rhs);
@@ -1454,6 +1437,9 @@ finish_comparison:
                             errlog("RUN: Impossible opcode in arith ops: %d\n", op);
                             break;
                     }
+
+                    if(lhs.is_type() || rhs.is_type())
+                        ans.type = _TYPE_TYPE;
                 } else {
                     ans.type = TYPE_ERR;
                     ans.v.err = E_TYPE;
@@ -1488,10 +1474,10 @@ finish_comparison:
                 rhs = POP();
                 lhs = POP();
 
-                if ((lhs.type == TYPE_INT || lhs.type == TYPE_FLOAT)
-                        && (rhs.type == TYPE_INT || rhs.type == TYPE_FLOAT))
+                if (lhs.is_num() && rhs.is_num()) {
                     ans = do_add(lhs, rhs);
-                else if (lhs.type == TYPE_STR && rhs.type == TYPE_STR) {
+                    if(lhs.is_type() || rhs.is_type()) ans.type = _TYPE_TYPE;
+                } else if (lhs.type == TYPE_STR && rhs.type == TYPE_STR) {
                     char *str;
                     int llen = memo_strlen(lhs.v.str);
                     int flen = llen + memo_strlen(rhs.v.str);
@@ -1570,8 +1556,8 @@ finish_comparison:
                 Var arg, ans;
 
                 arg = POP();
-                ans.type = TYPE_INT;
-                ans.v.num = !is_true(arg);
+                ans.type = TYPE_BOOL;
+                ans.v.truth = !is_true(arg);
                 PUSH(ans);
                 free_var(arg);
             }
@@ -1638,7 +1624,6 @@ finish_comparison:
                     }
                 } else
 #endif              /* WAIF_DICT */
-
                     if ((list.type != TYPE_LIST && list.type != TYPE_STR && list.type != TYPE_MAP) ||
                             ((list.type == TYPE_LIST || list.type == TYPE_STR) && index.type != TYPE_INT) ||
                             (list.type == TYPE_MAP && (index.is_collection()))) {
@@ -1814,7 +1799,7 @@ finish_comparison:
                         free_var(iterfrom);
                     }
                 } else {
-                    int len = (base.type == TYPE_STR ? memo_strlen(base.str()) : base.length());
+                    int len = (base.type == TYPE_STR ? strlen(base.str()) : base.length());
                     if(to.v.num < 0) to.v.num += len;
                     if(from.v.num < 0) from.v.num += len;
                     if(to.v.num < 0 || from.v.num < 0) {
@@ -1871,7 +1856,6 @@ finish_comparison:
                 obj = POP();        /* should be an object */
                 if (obj.type == TYPE_WAIF && propname.type == TYPE_STR) {
                     enum error err;
-
                     err = waif_get_prop(obj.v.waif, propname.v.str, &prop, RUN_ACTIV.progr);
                     free_var(obj);
                     if (err == E_PROPNF) {
@@ -1885,6 +1869,16 @@ finish_comparison:
                             PUSH(prop);
                         else
                             PUSH_ERROR(err);
+                    }
+                } else if(obj.type == TYPE_MAP && propname.type == TYPE_STR) {
+                    if (maplookup(obj, propname, &prop, 0) == nullptr) {
+                        free_var(propname);
+                        free_var(obj);
+                        PUSH_ERROR(E_RANGE);
+                    } else {
+                        PUSH_REF(prop);
+                        free_var(propname);
+                        free_var(obj);
                     }
                 } else if (!obj.is_object() || propname.type != TYPE_STR) {
                     var_type incorrect_type = propname.type != TYPE_STR ? propname.type : obj.type;
@@ -2135,6 +2129,45 @@ finish_comparison:
 
                 if (args.type != TYPE_LIST || verb.type != TYPE_STR)
                     err = E_TYPE;
+                else if(obj.type == TYPE_CALL) {
+                    if(!strncmp(verb.v.str, "this", memo_strlen(verb.v.str))) {
+                        if(args.length() != 1)
+                            err = E_INVARG;
+                        else if(args[1].type != TYPE_OBJ)
+                            err = E_INVIND;
+                        else {
+                            Object *o = dbpriv_find_object(args[1].obj());
+                            if(o == nullptr)
+                                err = E_INVIND;
+                            else {
+                                free_var(verb);
+                                obj.v.call->oid = o->id;
+                                PUSH(obj);
+                            }
+                        }
+                        break;
+                    } else if(!strncmp(verb.v.str, "call", memo_strlen(verb.v.str))) {
+                        db_verb_handle h = *(db_verb_handle*)obj.v.call;
+                        Objid definer = db_verb_definer(h).v.obj;
+
+                        if(!valid(h.oid)) {
+                            err = E_INVIND;
+                            free_var(args);
+                        } else {
+                            STORE_STATE_VARIABLES();
+                            err = call_verb2(definer, h.verbname, Var::new_obj(h.oid), args, 0, DEFAULT_THREAD_MODE);
+                            LOAD_STATE_VARIABLES();
+                            if(err == E_VERBNF) {
+                                free_var(obj);
+                                free_var(verb);
+                                obj = Var::new_obj(definer);
+                                verb = str_dup_to_var(h.verbname);
+                            }
+                        }   
+                    } else {
+                        goto call_proto;
+                    }
+                }
                 else if (obj.type == TYPE_WAIF) {
                     char *str = (char *)mymalloc(strlen(verb.v.str) + 2, M_STRING);
 
@@ -2147,6 +2180,7 @@ finish_comparison:
                     err = call_verb2(_class, verb.v.str, obj, args, 0, DEFAULT_THREAD_MODE);
                     LOAD_STATE_VARIABLES();
                 } else {
+call_proto:
                     Objid recv = NOTHING;
                     db_prop_handle h;
                     Var p;
@@ -2171,10 +2205,12 @@ else if (obj.type == TYPE_##t1) {           \
                     MATCH_TYPE(INT, int)
                     MATCH_TYPE(OBJ, obj)
                     MATCH_TYPE(FLOAT, float)
+                    MATCH_TYPE(COMPLEX, complex)
                     MATCH_TYPE(STR, str)
                     MATCH_TYPE(ERR, err)
                     MATCH_TYPE(LIST, list)
                     MATCH_TYPE(MAP, map)
+                    MATCH_TYPE(CALL, call)
 #undef          MATCH_TYPE
 
                     free_var(system);
@@ -2306,6 +2342,89 @@ else if (obj.type == TYPE_##t1) {           \
                 if (COUNT_EOP_TICK(eop))
                     ticks_remaining--;
                 switch (eop) {
+                    case EOP_BI_FUNC_CALL:
+                    {
+                        const unsigned func_id = READ_BYTES(bv, 2);  /* 2 == numbytes of func_id (EOP) */
+                        const Var args = POP();                      /* should be list */
+                        if (args.type != TYPE_LIST) {
+                            free_var(args);
+                            PUSH_ERROR(E_TYPE);
+                        } else {
+                            package p;
+
+                            STORE_STATE_VARIABLES();
+                            p = call_bi_func(func_id, args, 1, RUN_ACTIV.progr, nullptr);
+                            LOAD_STATE_VARIABLES();
+
+                            switch (p.kind) {
+                                case package::BI_RETURN:
+                                    PUSH(std::get<Var>(p.u));
+                                    break;
+                                case package::BI_RAISE:
+                                    if (RUN_ACTIV.debug) {
+                                        if (raise_error(p, nullptr))
+                                            return OUTCOME_ABORTED;
+                                        else
+                                            LOAD_STATE_VARIABLES();
+                                    } else {
+                                        raise_t err = std::get<raise_t>(p.u);
+
+                                        PUSH(err.code);
+                                        free_str(err.msg);
+                                        free_var(err.value);
+                                    }
+                                    break;
+                                case package::BI_CALL: 
+                                {
+                                    /* another activ has been pushed onto activ_stack */
+                                    call_t c = std::get<call_t>(p.u);
+
+                                    RUN_ACTIV.bi_func_id   = func_id;
+                                    RUN_ACTIV.bi_func_data = c.data;
+                                    RUN_ACTIV.bi_func_pc   = c.pc;
+
+                                    break;
+                                }
+                                case package::BI_SUSPEND:
+                                {
+                                    enum error e = suspend_task(p);
+
+                                    if (e == E_NONE)
+                                        return OUTCOME_BLOCKED;
+                                    else
+                                        PUSH_ERROR(e);
+                                }
+                                break;
+                                case package::BI_KILL:
+                                    STORE_STATE_VARIABLES();
+                                    abort_task((abort_reason)std::get<Var>(p.u).num());
+                                    return OUTCOME_ABORTED;
+                                    /* NOTREACHED */
+                            }            
+                        }
+                    }
+                    break;
+                    case EOP_CALL_HANDLE:
+                    {
+                        Var r, obj, verb;
+
+                        obj = POP();  /* whatever */
+                        verb = POP(); /* should be str */
+
+                        if(obj.type == TYPE_OBJ && verb.type == TYPE_STR) {
+                            r = Var::new_call(obj, var_ref(verb));
+                            free_var(verb);
+                            if(r.v.call->ptr != nullptr)
+                                PUSH(r);
+                            else
+                                PUSH_ERROR(E_VERBNF);
+                        } else {
+                            free_var(verb);
+                            PUSH_ERROR(E_INVIND);
+                        }
+                    }
+                    break;
+
                     case EOP_RANGESET:
                     {
                         Var base, from, to, value;
@@ -2779,16 +2898,19 @@ else if (obj.type == TYPE_##t1) {           \
 
                         rhs = POP();
                         lhs = POP();
-                        if (lhs.type == TYPE_INT && rhs.type == TYPE_INT) {
-                            ans.type = TYPE_INT;
+
+                        if (lhs.is_int() && rhs.is_int()) {
                             if (eop == EOP_BITXOR)
-                                ans.v.num = lhs.v.num ^ rhs.v.num;
+                                ans = Var::new_int(lhs.num() ^ rhs.num());
                             else if (eop == EOP_BITAND)
-                                ans.v.num = lhs.v.num & rhs.v.num;
+                                ans = Var::new_int(lhs.num() & rhs.num());
                             else if (eop == EOP_BITOR)
-                                ans.v.num = lhs.v.num | rhs.v.num;
+                                ans = Var::new_int(lhs.num() | rhs.num());
                             else
                                 errlog("RUN: Impossible opcode in bitwise ops: %d\n", eop);
+                            
+                            if(lhs.is_type() || rhs.is_type())
+                                ans.type = _TYPE_TYPE;
                         } else {
                             ans.type = TYPE_ERR;
                             ans.v.err = E_TYPE;
@@ -2816,7 +2938,7 @@ else if (obj.type == TYPE_##t1) {           \
 
                         rhs = POP();
                         lhs = POP();
-                        if (lhs.type != TYPE_INT || rhs.type != TYPE_INT) {
+                        if (!lhs.is_int() || !rhs.is_int()) {
                             ans.type = TYPE_ERR;
                             ans.v.err = E_TYPE;
 
@@ -2859,7 +2981,7 @@ else if (obj.type == TYPE_##t1) {           \
                         var_type arg_type;
 
                         arg = POP();
-                        if (arg.type == TYPE_INT) {
+                        if (arg.is_int()) {
                             ans = Var::new_int(~arg.num());
                         } else {
                             ans.type = TYPE_ERR;
@@ -3335,6 +3457,7 @@ do_server_program_task(Var _this, const char *verb, Var args, Var vloc,
     set_rt_env_str(env, SLOT_PREPSTR, str_dup(""));
     set_rt_env_str(env, SLOT_VERB, str_ref(RUN_ACTIV.verb));
     set_rt_env_var(env, SLOT_ARGS, args);
+    set_rt_env_str(env, SLOT_CMDSTR, str_dup(argstr));
 
     return do_task(program, MAIN_VECTOR, result, 1/*fg*/, do_db_tracebacks);
 }
@@ -3370,6 +3493,7 @@ do_input_task(Objid user, Parsed_Command * pc, Objid recv, db_verb_handle vh)
     set_rt_env_str(env, SLOT_PREPSTR, str_ref(pc->prepstr));
     set_rt_env_str(env, SLOT_VERB, str_ref(pc->verb));
     set_rt_env_var(env, SLOT_ARGS, var_ref(pc->args));
+    set_rt_env_str(env, SLOT_CMDSTR, str_ref(pc->cmdstr));
 
     return do_task(prog, MAIN_VECTOR, nullptr, 1/*fg*/, 1/*traceback*/);
 }
@@ -3410,6 +3534,7 @@ setup_activ_for_eval(Program * prog)
     set_rt_env_str(env, SLOT_PREPSTR, str_dup(""));
     set_rt_env_str(env, SLOT_VERB, str_dup(""));
     set_rt_env_var(env, SLOT_ARGS, new_list(0));
+    set_rt_env_str(env, SLOT_CMDSTR, str_dup(""));
 
     RUN_ACTIV._this = var_ref(nothing);
     RUN_ACTIV.player = CALLER_ACTIV.player;

@@ -26,6 +26,7 @@
 #include "db.h"
 #include "db_private.h"
 #include "list.h"
+#include "log.h"
 #include "server.h"
 #include "storage.h"
 #include "utils.h"
@@ -383,7 +384,7 @@ db_count_propdefs(Var obj)
 }
 
 int
-db_for_all_propdefs(Var obj, int (*func) (void *, const char *), void *data)
+db_for_all_propdefs(Var obj, std::function<int(void*, const char*)> func, void *data) //int (*func) (void *, const char *), void *data)
 {
     int i;
     Object *o = dbpriv_dereference(obj);
@@ -409,6 +410,26 @@ db_for_all_propvals(Var obj, int (*func) (void *, Var), void *data)
 
     return 0;
 }
+
+int 
+db_for_all_props(Var obj, std::function<int(Var, Var)> func)
+{
+    Object *o = dbpriv_dereference(obj);
+    int len = o->propdefs.cur_length;
+
+    Var propname, propval;
+    propname.type = TYPE_STR;
+
+    for (auto i = 0; i < len; i++) {
+        propname.v.str = o->propdefs.l[i].name;
+        propval = o->propval[i].var;
+        int ret = func(propname, propval);
+        if(ret != 0) return ret;
+    }
+
+    return 0;
+}
+
 
 struct contents_data {
     Var r;
@@ -459,7 +480,7 @@ get_bi_value(db_prop_handle h, Var * value)
         case BP_LAST_MOVE:
             *value = var_ref(dbpriv_object_last_move(o));
             break;
-        case    BP_CONTENTS:
+        case BP_CONTENTS:
             *value = var_ref(dbpriv_object_contents(o));
             break;
         default:
@@ -467,9 +488,28 @@ get_bi_value(db_prop_handle h, Var * value)
     }
 }
 
+static int old_offset(Var target, Var _this) {
+    Var ancestor, ancestors;
+    int i, c, offset = 0;
+    Object *o;
+
+    ancestors = db_ancestors_old(_this, true);
+
+    FOR_EACH(ancestor, ancestors, i, c) {
+        if (equality(target, ancestor, 0))
+            break;
+        o = dbpriv_dereference(ancestor);
+        offset += o->propdefs.cur_length;
+    }
+
+    free_var(ancestors);
+
+    return i <= c ? offset : -1;
+}
+
 /* does NOT consume `obj' and `name' */
 db_prop_handle
-db_find_property(Var obj, const char *name, Var *value)
+db_find_property(Var obj, const char *name, Var *value, bool old_order)
 {
     Object *o = dbpriv_dereference(obj);
     int hash = str_hash(name);
@@ -508,7 +548,7 @@ db_find_property(Var obj, const char *name, Var *value)
 
     h.built_in = BP_NONE;
 
-    Var ancestor, ancestors = db_ancestors(obj, false);
+    Var ancestor, ancestors = old_order ? db_ancestors_old(obj, false) : db_ancestors(obj, false);
 
     Proplist *props = &(o->propdefs);
     Propdef *defs = props->l;
@@ -563,17 +603,19 @@ done:
              * anonymous objects can't currently be parents of other
              * objects.  Thus `new_obj()' below is okay.
              */
+
             if (TYPE_LIST == o->parents.type) {
                 Var parent, parents = o->parents;
                 int i2, c2, offset = 0;
                 FOR_EACH(parent, parents, i2, c2)
-                if ((offset = properties_offset(Var::new_obj(((Object *)h.definer)->id), parent)) > -1)
+
+                if ((offset = old_order ? old_offset(Var::new_obj(((Object *)h.definer)->id), parent) : properties_offset(Var::new_obj(((Object *)h.definer)->id), parent)) > -1)
                     break;
                 o = dbpriv_find_object(parent.v.obj);
                 prop = o->propval + offset + i;
             }
             else if (TYPE_OBJ == o->parents.type && NOTHING != o->parents.v.obj) {
-                int offset = properties_offset(Var::new_obj(((Object *)h.definer)->id), o->parents);
+                int offset = old_order ? old_offset(Var::new_obj(((Object *)h.definer)->id), o->parents) : properties_offset(Var::new_obj(((Object *)h.definer)->id), o->parents);
                 o = dbpriv_find_object(o->parents.v.obj);
                 prop = o->propval + offset + i;
             }
@@ -605,11 +647,19 @@ db_property_value(db_prop_handle h)
         get_bi_value(h, &value);
     else {
         Pval *prop = (Pval *)h.ptr;
-
         value = prop->var;
     }
 
     return value;
+}
+
+Var
+db_property_value_default(Objid obj, const char* name, Var default_value)
+{
+    Var result;
+    db_prop_handle h = db_find_property(Var::new_obj(obj), name, &result);
+    if(!h.ptr) return default_value;
+    return result;
 }
 
 void

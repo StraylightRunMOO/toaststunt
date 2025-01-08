@@ -22,6 +22,7 @@
 #include <random>
 #include <algorithm>
 #include <functional>
+#include <fstream>
 #ifdef __MACH__
 #include <mach/clock.h>     // Millisecond time for macOS
 #include <mach/mach.h>
@@ -32,6 +33,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <ctime>
+#include <iomanip>
 #include "config.h"
 #include "functions.h"
 #include "log.h"
@@ -48,21 +51,20 @@
 sosemanuk_key_context key_context;
 sosemanuk_run_context run_context;
 
-static std::mt19937 rng;
-static std::random_device rd;
+static std::mt19937_64 rng;
+static splitmix64 s64;
+
+splitmix64 new_splitmix64(uint64_t seed = 0) {
+    return (seed == 0) ? splitmix64() : splitmix64(seed);
+}
 
 static void reseed_rng()
 {
-    std::random_device entropy_source;
-    std::seed_seq::result_type data[std::mt19937::state_size];
-    std::generate_n(data, std::mt19937::state_size, std::ref(entropy_source));
-
-    std::seed_seq prng_seed(data, data + std::mt19937::state_size);
-    rng.seed(prng_seed);
-}
-
-splitmix64 new_splitmix64(uint64_t seed = 0) {
-    return (seed == 0) ? splitmix64(rd()) : splitmix64(seed);
+    s64 = new_splitmix64();
+    std::array<std::uint_fast64_t, std::mt19937_64::state_size> state;
+    sysrandom(state.begin(), state.size() * sizeof(std::uint_fast64_t));
+    std::seed_seq data(state.begin(), state.end());
+    rng.seed(data);
 }
 
 int
@@ -149,6 +151,9 @@ become_integer(Var in, Num *ret, int called_from_toint)
                 return E_FLOAT;
             *ret = (Num) in.v.fnum;
             break;
+        case TYPE_COMPLEX:
+            *ret = static_cast<Num>(in.v.complex.real());
+            break;
         case TYPE_BOOL:
             *ret = in.v.truth;
             break;
@@ -182,6 +187,9 @@ become_float(Var in, double *ret)
             break;
         case TYPE_FLOAT:
             *ret = in.v.fnum;
+            break;
+        case TYPE_COMPLEX:
+            *ret = static_cast<double>(in.v.complex.real());
             break;
         case TYPE_MAP:
         case TYPE_LIST:
@@ -253,21 +261,25 @@ compare_numbers(Var a, Var b)
     return ans;
 }
 
-
 #define SIMPLE_BINARY(name, op)                 \
     Var                                         \
     do_ ## name(Var a, Var b)                   \
     {                                           \
         Var ans;                                \
-        \
+                                                \
         if (a.type != b.type) {                 \
-            ans.type = TYPE_ERR;                \
-            ans.v.err = E_TYPE;                 \
-        } else if (a.type == TYPE_INT) {        \
-            ans.type = TYPE_INT;                \
-            ans.v.num = a.v.num op b.v.num;     \
+            if(b.type == TYPE_COMPLEX)          \
+                ans = Var::new_complex(complex_t(a.fnum(), 0.0) op b.complex()); \
+            else if(a.type == TYPE_COMPLEX)     \
+                ans = Var::new_complex(a.complex() op complex_t(b.fnum(), 0.0)); \
+            else                                \
+                ans = (a.is_float() || b.is_float()) ? Var::new_float(a.fnum() op b.fnum()) : Var::new_err(E_TYPE); \
+        } else if(a.is_complex()) {             \
+            ans = Var::new_complex(a.complex() op b.complex()); \
+        } else if (a.is_int()) {                \
+            ans = Var::new_int(a.num() op b.num()); \
         } else {                                \
-            double d = a.v.fnum op b.v.fnum;    \
+            double d = a.fnum() op b.fnum();    \
             \
             if (!IS_REAL(d)) {                  \
                 ans.type = TYPE_ERR;            \
@@ -277,7 +289,7 @@ compare_numbers(Var a, Var b)
                 ans.v.fnum = d;                 \
             }                                   \
         }                                       \
-        \
+                                                \
         return ans;                             \
     }
 
@@ -290,12 +302,20 @@ do_modulus(Var a, Var b)
 {
     Var ans;
 
-    if (a.type != b.type) {
-        ans.type = TYPE_ERR;
-        ans.v.err = E_TYPE;
-    } else if ((a.type == TYPE_INT && b.v.num == 0) || (a.type == TYPE_FLOAT && b.v.fnum == 0.0)) {
+    if(!a.is_complex() && !b.is_complex() && b.fnum() == 0.0) {
         ans.type = TYPE_ERR;
         ans.v.err = E_DIV;
+    } else if (a.type != b.type) {
+        if(b.type == TYPE_COMPLEX) {
+            complex_t lhs = complex_t(a.fnum(), 0.0);
+            ans = Var::new_float(std::sqrt(std::pow(lhs.real() - b.complex().real(), 2.0) + std::pow(lhs.imag() - b.complex().imag(), 2.0)));
+        } else if(a.type == TYPE_COMPLEX) {
+            complex_t rhs = complex_t(b.fnum(), 0.0);
+            ans = Var::new_float(std::sqrt(std::pow(a.complex().real() - rhs.real(), 2.0) + std::pow(a.complex().imag() - rhs.imag(), 2.0)));
+        } else
+            ans = (a.is_float() || b.is_float()) ? Var::new_float(a.fnum() / b.fnum()) : Var::new_err(E_TYPE);
+    } else if(a.is_complex()) {
+        ans = Var::new_float(std::sqrt(std::pow(a.complex().real() - b.complex().real(), 2.0) + std::pow(a.complex().imag() - b.complex().imag(), 2.0)));
     } else {
         if (a.type == TYPE_INT)
         {
@@ -320,15 +340,22 @@ do_modulus(Var a, Var b)
 Var
 do_divide(Var a, Var b)
 {
+    using namespace std::complex_literals;
+
     Var ans;
 
-    if (a.type != b.type) {
-        ans.type = TYPE_ERR;
-        ans.v.err = E_TYPE;
-    } else if ((a.type == TYPE_INT && b.v.num == 0) ||
-               (a.type == TYPE_FLOAT && b.v.fnum == 0.0)) {
+    if(!b.is_complex() && b.fnum() == 0.0) {
         ans.type = TYPE_ERR;
         ans.v.err = E_DIV;
+    } else if (a.type != b.type) {
+        if(b.type == TYPE_COMPLEX)
+            ans = Var::new_complex(complex_t(a.fnum(), 0.0) / b.complex());
+        else if(a.type == TYPE_COMPLEX)
+            ans = Var::new_complex(a.complex() / complex_t(b.fnum(), 0.0));
+        else
+            ans = (a.is_float() || b.is_float()) ? Var::new_float(a.fnum() / b.fnum()) : Var::new_err(E_TYPE);
+    } else if(a.is_complex()) {
+        ans = (b.complex() == static_cast<complex_t>(0.0 + 0i)) ? Var::new_err(E_DIV) : Var::new_complex(a.complex() / b.complex());
     } else if (a.type == TYPE_INT) {
         ans.type = TYPE_INT;
         if (a.v.num == MININT && b.v.num == -1)
@@ -349,78 +376,45 @@ do_divide(Var a, Var b)
     return ans;
 }
 
+static inline float maybe_round(float n) {
+    return trunc(abs(n) + 0.000001) > abs(n) ? std::roundf(n) : n;
+}
+
 Var
-do_power(Var lhs, Var rhs)
-{   /* LHS ^ RHS */
+do_power(Var a, Var b)
+{
     Var ans;
 
-    if (lhs.type == TYPE_INT) { /* integer exponentiation */
-        Num a = lhs.v.num, b, r;
-
-        if (rhs.type != TYPE_INT)
-            goto type_error;
-
-        b = rhs.v.num;
-        ans.type = TYPE_INT;
-        if (b < 0) {
-            switch (a) {
-                case -1:
-                    ans.v.num = (b & 1) ? 1 : -1;
-                    break;
-                case 0:
-                    ans.type = TYPE_ERR;
-                    ans.v.err = E_DIV;
-                    break;
-                case 1:
-                    ans.v.num = 1;
-                    break;
-                default:
-                    ans.v.num = 0;
-                    break;
-            }
-        } else {
-            r = 1;
-            while (b != 0) {
-                if (b & 1)
-                    r *= a;
-                a *= a;
-                b >>= 1;
-            }
-            ans.v.num = r;
+    if(a.type == b.type) {
+        switch(a.type) {
+        case TYPE_INT:
+            ans = Var::new_int(std::pow(a.num(), b.num()));
+            break;
+        case TYPE_FLOAT:
+            ans = Var::new_float(std::pow(a.fnum(), b.fnum()));
+            break;
+        case TYPE_COMPLEX:
+            ans = Var::new_complex(std::pow(a.complex(), b.complex()));
+            break;
+        default:
+            ans = Var::new_err(E_TYPE);
         }
-    } else if (lhs.type == TYPE_FLOAT) {    /* floating-point exponentiation */
-        double d;
+    } else {
+        if(b.type == TYPE_COMPLEX) {
+            complex_t lhs = complex_t(static_cast<float>(a.fnum()), 0.0);
+            complex_t res = std::pow(lhs, b.complex());
+            ans = Var::new_complex(complex_t(maybe_round(res.real()), maybe_round(res.imag())));
+        } else if(a.type == TYPE_COMPLEX) {
+            complex_t rhs = complex_t(static_cast<float>(b.fnum()), 0.0);
+            complex_t res = std::pow(a.complex(), rhs);
+            ans = Var::new_complex(complex_t(maybe_round(res.real()), maybe_round(res.imag())));
+        } else
+            ans = (a.is_float() || b.is_float()) ? Var::new_float(std::pow(a.fnum(), b.fnum())) : Var::new_err(E_TYPE);
+    }
 
-        switch (rhs.type) {
-            case TYPE_INT:
-                d = (double) rhs.v.num;
-                break;
-            case TYPE_FLOAT:
-                d = rhs.v.fnum;
-                break;
-            default:
-                goto type_error;
-        }
-        errno = 0;
-        d = pow(lhs.v.fnum, d);
-        if (errno != 0 || !IS_REAL(d)) {
-            ans.type = TYPE_ERR;
-            ans.v.err = E_FLOAT;
-        } else {
-            ans.type = TYPE_FLOAT;
-            ans.v.fnum = d;
-        }
-    } else
-        goto type_error;
-
-    return ans;
-
-type_error:
-    ans.type = TYPE_ERR;
-    ans.v.err = E_TYPE;
     return ans;
 }
-
+
 /**** built in functions ****/
 
 static package
@@ -453,6 +447,23 @@ bf_tofloat(Var arglist, Byte next, void *vdata, Objid progr)
         return make_error_pack(e);
 
     return make_var_pack(r);
+}
+
+static package
+bf_tocomplex(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    Var r;
+    enum error e;
+
+    r.type = TYPE_FLOAT;
+    e = become_float(arglist[1], &r.v.fnum);
+
+    free_var(arglist);
+
+    if (e != E_NONE)
+        return make_error_pack(e);
+
+    return make_var_pack(Var::new_complex(complex_t(r.fnum(), 0.0)));
 }
 
 static package
@@ -531,23 +542,153 @@ bf_abs(Var arglist, Byte next, void *vdata, Objid progr)
     return make_var_pack(r);
 }
 
-#define MATH_FUNC(name)                                                             \
-    static package                                                                  \
-    bf_ ## name(Var arglist, Byte next, void *vdata, Objid progr)                   \
-    {                                                                               \
-        errno = 0;                                                                  \
-        const auto result = name(arglist[1].v.fnum);                         \
-        free_var(arglist);                                                          \
-        if (errno == EDOM)                                                          \
-            return make_error_pack(E_INVARG);                                       \
-        else if (errno != 0  ||  !IS_REAL(result))                                  \
-            return make_error_pack(E_FLOAT);                                        \
-        else                                                                        \
-            return make_float_pack(result);                                         \
+namespace std {
+    complex_t trunc(complex_t n) {
+        return complex_t(trunc(n.real()), trunc(n.imag()));
     }
 
-MATH_FUNC(sqrt)
-MATH_FUNC(cbrt)
+    complex_t round(complex_t n) {
+        return complex_t(round(n.real()), round(n.imag()));
+    }
+
+    complex_t ceil(complex_t n) {
+        return complex_t(ceil(n.real()), ceil(n.imag()));
+    }
+
+    complex_t floor(complex_t n) {
+        return complex_t(floor(n.real()), floor(n.imag()));
+    }
+}
+
+#define MATH_FUNC(name)                                          \
+  static package                                                  \
+  bf_ ## name(Var arglist, Byte next, void *vdata, Objid progr)   \
+  {                                                               \
+    Var v = arglist[1];                                           \
+    errno = 0;                                                    \
+    switch(v.type) {                                              \
+    case TYPE_INT:                                                \
+        v = Var::new_int(std::name(v.num()));                     \
+        break;                                                    \
+    case TYPE_FLOAT:                                              \
+        v = Var::new_float(std::name(v.fnum()));                  \
+        break;                                                    \
+    case TYPE_COMPLEX:                                            \
+        v = Var::new_complex(std::name(v.complex()));             \
+        break;                                                    \
+    default:                                                      \
+        v = Var::new_err(E_INVARG);                               \
+    }                                                             \
+                                                                  \
+    free_var(arglist);                                            \
+                                                                  \
+    if (errno == EDOM)                                            \
+        return make_error_pack(E_INVARG);                         \
+    else if (errno != 0)                                          \
+        return make_error_pack(E_FLOAT);                          \
+                                                                  \
+    return make_var_pack(v);                                      \
+}
+
+
+static package
+bf_sqrt(Var arglist, Byte next, void *vdata, Objid progr) {
+    Var r, v = arglist[1];
+
+    switch(v.type) {
+    case TYPE_INT:
+        r = (v.num() > 0) ? Var::new_int(std::sqrt(v.num())) : Var::new_complex(std::sqrt(v.complex()));
+        break;
+    case TYPE_FLOAT:
+        r = (v.num() > 0) ? Var::new_float(std::sqrt(v.fnum())) : Var::new_complex(std::sqrt(v.complex()));
+        break;
+    case TYPE_COMPLEX:
+        r = Var::new_complex(std::sqrt(v.complex()));
+        break;
+    default:
+        r = Var::new_err(E_INVARG);
+    }
+
+    free_var(arglist);
+    return (r.type != TYPE_ERR) ? make_var_pack(r) : make_error_pack(r.v.err);
+}
+
+static package 
+bf_cbrt(Var arglist, Byte next, void *vdata, Objid progr) {
+    Var v = arglist[1];
+
+    switch(v.type) {
+    case TYPE_INT:
+        v = Var::new_int(std::cbrt(v.num()));
+        break;
+    case TYPE_FLOAT:
+        v = Var::new_float(std::cbrt(v.fnum()));
+        break;
+    case TYPE_COMPLEX:
+        v = Var::new_complex(std::pow(v.complex(), complex_t(1.0 / 3.0, 0.0)));
+        break;
+    default:
+        v = Var::new_err(E_INVARG);
+    }
+
+    free_var(arglist);
+    return (v.type != TYPE_ERR) ? make_var_pack(v) : make_error_pack(v.v.err);
+}
+
+#define M_LOG2 0.693147180559945
+
+static package 
+bf_log2(Var arglist, Byte next, void *vdata, Objid progr) {
+    Var v = arglist[1];
+    Var b = arglist[2];
+
+    switch(v.type) {
+    case TYPE_INT:
+        v = Var::new_int(static_cast<Num>(std::log(v.fnum()) / M_LOG2));
+        break;
+    case TYPE_FLOAT:
+        v = Var::new_float(std::log(v.fnum()) / M_LOG2);
+        break;
+    case TYPE_COMPLEX:
+        v = Var::new_complex(std::log(v.complex()) / complex_t(M_LOG2, 0.0));
+        break;
+    default:
+        {
+            free_var(arglist);
+            return make_error_pack(E_INVARG);
+        }
+    }
+
+    free_var(arglist);
+    return make_var_pack(v);
+}
+
+static package 
+bf_logn(Var arglist, Byte next, void *vdata, Objid progr) {
+    Var v = arglist[1];
+    Var b = arglist[2];
+
+    switch(v.type) {
+    case TYPE_INT:
+        v = Var::new_int(static_cast<Num>(std::log(v.fnum()) / std::log(b.fnum())));
+        break;
+    case TYPE_FLOAT:
+        v = Var::new_float(std::log(v.fnum()) / std::log(b.fnum()));
+        break;
+    case TYPE_COMPLEX:
+        v = Var::new_complex(std::log(v.complex()) / std::log(b.complex()));
+        break;
+    default:
+        {
+            free_var(arglist);
+            return make_error_pack(E_INVARG);
+        }
+    }
+
+    free_var(arglist);
+    return make_var_pack(v);
+}
+
 MATH_FUNC(sin)
 MATH_FUNC(cos)
 MATH_FUNC(tan)
@@ -564,60 +705,86 @@ MATH_FUNC(log)
 MATH_FUNC(log10)
 MATH_FUNC(ceil)
 MATH_FUNC(floor)
-
-static package
-bf_trunc(Var arglist, Byte next, void *vdata, Objid progr)
-{
-    double d;
-
-    d = arglist[1].v.fnum;
-    errno = 0;
-    if (d < 0.0)
-        d = ceil(d);
-    else
-        d = floor(d);
-    free_var(arglist);
-    if (errno == EDOM)
-        return make_error_pack(E_INVARG);
-    else if (errno != 0 || !IS_REAL(d))
-        return make_error_pack(E_FLOAT);
-    else
-        return make_float_pack(d);
-}
+MATH_FUNC(round)
+MATH_FUNC(trunc)
 
 static package
 bf_atan(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    double d, dd;
+    auto nargs = arglist.length();
 
-    d = arglist[1].v.fnum;
+    Var r;
+
     errno = 0;
-    if (arglist.length() >= 2) {
-        dd = arglist[2].v.fnum;
-        d = atan2(d, dd);
-    } else
-        d = atan(d);
+    if(nargs >= 2) {
+        if(arglist[1].type == TYPE_COMPLEX) {
+            free_var(arglist);
+            return make_error_pack(E_INVARG);
+        } else if(arglist[1].type == TYPE_FLOAT || arglist[2].type == TYPE_FLOAT) {
+            r = Var::new_float(std::atan2(arglist[1].fnum(), arglist[2].fnum()));
+        } else {
+            r = Var::new_int(static_cast<Num>(std::atan2(arglist[1].fnum(), arglist[2].fnum())));
+        }
+    } else {
+        switch(arglist[1].type) {
+        case TYPE_INT:
+            r = Var::new_int(static_cast<Num>(std::atan(arglist[1].fnum())));
+            break;
+        case TYPE_FLOAT:
+            r = Var::new_float(std::atan(arglist[1].fnum()));
+            break;
+        case TYPE_COMPLEX:
+            r = Var::new_complex(std::atan(arglist[1].complex()));
+            break;
+        default:
+            r = Var::new_err(E_INVARG);        
+        }
+    }
+
     free_var(arglist);
     if (errno == EDOM)
         return make_error_pack(E_INVARG);
-    else if (errno != 0 || !IS_REAL(d))
+    else if (errno != 0)
         return make_error_pack(E_FLOAT);
     else
-        return make_float_pack(d);
+        return make_var_pack(r);
 }
 
-static package
-bf_atan2(Var arglist, Byte next, void *vdata, Objid progr)
-{
-    const auto y = arglist[1].v.fnum;
-    const auto x = arglist[2].v.fnum;
-    free_var(arglist);
+static package bf_time_fmt(Var arglist, Byte next, void *vdata, Objid progr) {
+  /* tm time structs have a max year equal to integer, 
+     which a 64 bit number of seconds will surpass  */
+  const long int year_seconds = 31536000;
+  static const Num max_year   = std::numeric_limits<int>::max() * year_seconds;
+  static const Num min_year   = -max_year;
 
-    const double result = atan2(y, x);
-    if (errno == EDOM)
-        return make_error_pack(E_INVARG);
-    else
-        return make_float_pack(result);
+  auto nargs      = arglist.length();
+  const char *fmt = nargs >= 1 ? arglist[1].str() : "%c %Z";
+  std::time_t ts  = nargs >= 2 ? std::clamp(arglist[2].num(), min_year, max_year) : time(nullptr);
+  struct tm *t    = localtime(&ts);
+  
+  free_var(arglist);
+  if (t == nullptr)
+    return make_error_pack(E_INVARG);
+
+  std::ostringstream ss;
+  ss << std::put_time(t, fmt);  
+
+  return make_var_pack(str_dup_to_var(ss.str().c_str()));
+}
+
+static package bf_time_parse(Var arglist, Byte next, void *vdata, Objid progr) {
+  auto nargs      = arglist.length();
+  const char *str = arglist[1].str();
+  const char *fmt = nargs >= 2 ? arglist[2].str() : "%c %Z";
+  int is_dst      = nargs >= 3 ? arglist[3].num() : -1; // default attempts to figure out DST
+
+  std::tm t{.tm_isdst = is_dst};
+
+  std::istringstream ss(str);
+  ss >> std::get_time(&t, fmt);
+
+  free_var(arglist);
+  return make_var_pack(Var::new_int(mktime(&t)));
 }
 
 static package
@@ -773,36 +940,39 @@ bf_frandom(Var arglist, Byte next, void *vdata, Objid progr)
     ret.v.fnum = f;
 
     return make_var_pack(ret);
-
 }
 
 static package 
 bf_rand_splitmix64(Var arglist, Byte next, void *vdata, Objid progr) {
     auto nargs = arglist.length();
-    auto count = nargs >= 1 ? arglist[1].num() : 1;
-    auto min   = nargs >= 2 ? arglist[2].num() : 0;
-    auto max   = nargs >= 3 ? arglist[3].num() : MAXINT;
+    auto min   = nargs >= 1 ? arglist[1].num() : 1;
+    auto max   = nargs >= 2 ? arglist[2].num() : INTNUM_MAX;
+    auto count = nargs >= 3 ? arglist[3].num() : 1;
 
-    splitmix64 rng = nargs >= 4 ? splitmix64(arglist[4].unum()) : splitmix64();
     std::uniform_int_distribution<Num> distrib(min, max);
 
-    Var r = new_list(abs(count));
-    for(auto i=1; i<=r.length(); i++)
-      r[i] = Var::new_int(distrib(rng));  
+    Var r;
+    if(nargs >= 4) {
+        splitmix64 rng = splitmix64(arglist[4].unum());
+        if(count <= 1) {
+            r = Var::new_int(distrib(rng));
+        } else {
+            r = new_list(count);
+            for(auto i=1; i<=r.length(); i++)
+                r[i] = Var::new_int(distrib(rng));
+        }
+    } else {
+        if(count <= 1) {
+            r = Var::new_int(distrib(s64));
+        } else {
+            r = new_list(count);
+            for(auto i=1; i<=r.length(); i++)
+                r[i] = Var::new_int(distrib(s64));
+        }
+    }
 
     free_var(arglist);
     return make_var_pack(r);
-}
-
-/* Round numbers to the nearest integer value to args[1] */
-static package
-bf_round(Var arglist, Byte next, void *vdata, Objid progr)
-{
-    double r = round((double)arglist[1].v.fnum);
-
-    free_var(arglist);
-
-    return make_var_pack(Var::new_float(r));
 }
 
 #define TRY_STREAM enable_stream_exceptions()
@@ -919,9 +1089,9 @@ bf_relative_heading(Var arglist, Byte next, void *vdata, Objid progr)
         return make_error_pack(E_TYPE);
     }
 
-    double dx = arglist[2][1].v.fnum - arglist[1][1].v.fnum;
-    double dy = arglist[2][2].v.fnum - arglist[1][2].v.fnum;
-    double dz = arglist[2][3].v.fnum - arglist[1][3].v.fnum;
+    double dx = arglist[2][1].fnum() - arglist[1][1].fnum();
+    double dy = arglist[2][2].fnum() - arglist[1][2].fnum();
+    double dz = arglist[2][3].fnum() - arglist[1][3].fnum();
 
     double xy = 0.0;
     double z = 0.0;
@@ -934,14 +1104,24 @@ bf_relative_heading(Var arglist, Byte next, void *vdata, Objid progr)
     z = atan2(dz, sqrt((dx * dx) + (dy * dy))) * 57.2957795130823;
 
     Var s = new_list(2);
-    s[1].type = TYPE_INT;
-    s[1].v.num = (int)xy;
-    s[2].type = TYPE_INT;
-    s[2].v.num = (int)z;
+    s[1] = Var::new_int(xy);
+    s[2] = Var::new_int(z);
 
     free_var(arglist);
 
     return make_var_pack(s);
+}
+
+static package
+bf_add_test(Var arglist, Byte next, void *vdata, Objid progr)
+{
+    Var lhs = arglist[1];
+    Var rhs = arglist[2];
+
+    Var r = lhs + rhs;
+
+    free_var(arglist);
+    return make_var_pack(r);
 }
 
 Var zero;           /* useful constant */
@@ -954,45 +1134,51 @@ register_numbers(void)
 
     reseed_rng();
 
-    register_function("toint", 1, 1, bf_toint, TYPE_ANY);
-    register_function("tofloat", 1, 1, bf_tofloat, TYPE_ANY);
-    register_function("min", 1, -1, bf_min, TYPE_NUMERIC);
-    register_function("max", 1, -1, bf_max, TYPE_NUMERIC);
-    register_function("abs", 1, 1, bf_abs, TYPE_NUMERIC);
-    register_function("random", 0, 2, bf_random, TYPE_INT, TYPE_INT);
-    register_function("reseed_random", 0, 0, bf_reseed_random);
-    register_function("frandom", 1, 2, bf_frandom, TYPE_FLOAT, TYPE_FLOAT);
-    register_function("rand_splitmix64", 0, 4, bf_rand_splitmix64, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT);
-    register_function("round", 1, 1, bf_round, TYPE_FLOAT);
-    register_function("random_bytes", 1, 1, bf_random_bytes, TYPE_INT);
-    register_function("time", 0, 0, bf_time);
-    register_function("ctime", 0, 1, bf_ctime, TYPE_INT);
-    register_function("ftime", 0, 1, bf_ftime, TYPE_INT);
-    register_function("floatstr", 2, 3, bf_floatstr, TYPE_FLOAT, TYPE_INT, TYPE_ANY);
+    register_function("toint",           1,  1, bf_toint, TYPE_ANY);
+    register_function("tofloat",         1,  1, bf_tofloat, TYPE_ANY);
+    register_function("tocomplex",       1,  1, bf_tocomplex, TYPE_ANY);
+    register_function("min",             1, -1, bf_min, TYPE_NUMERIC);
+    register_function("max",             1, -1, bf_max, TYPE_NUMERIC);
+    register_function("abs",             1,  1, bf_abs, TYPE_NUMERIC);
+    register_function("random",          0,  2, bf_random, TYPE_INT, TYPE_INT);
+    register_function("reseed_random",   0,  0, bf_reseed_random);
+    register_function("frandom",         1,  2, bf_frandom, TYPE_FLOAT, TYPE_FLOAT);
+    register_function("rand_splitmix64", 0,  4, bf_rand_splitmix64, TYPE_INT, TYPE_INT, TYPE_INT, TYPE_INT);
+    register_function("round",           1,  1, bf_round, TYPE_NUMERIC);
+    register_function("random_bytes",    1,  1, bf_random_bytes, TYPE_INT);
+    register_function("time",            0,  0, bf_time);
+    register_function("ctime",           0,  1, bf_ctime, TYPE_INT);
+    register_function("ftime",           0,  1, bf_ftime, TYPE_INT);
+    register_function("time_fmt",        0,  2, bf_time_fmt, TYPE_STR, TYPE_INT);
+    register_function("time_parse",      1,  3, bf_time_parse, TYPE_STR, TYPE_STR, TYPE_INT);
+    register_function("floatstr",        2,  3, bf_floatstr, TYPE_FLOAT, TYPE_INT, TYPE_ANY);
 
-    register_function("sqrt", 1, 1, bf_sqrt, TYPE_FLOAT);
-    register_function("cbrt", 1, 1, bf_cbrt, TYPE_FLOAT);
-    register_function("sin", 1, 1, bf_sin, TYPE_FLOAT);
-    register_function("cos", 1, 1, bf_cos, TYPE_FLOAT);
-    register_function("tan", 1, 1, bf_tan, TYPE_FLOAT);
-    register_function("asin", 1, 1, bf_asin, TYPE_FLOAT);
-    register_function("acos", 1, 1, bf_acos, TYPE_FLOAT);
-    register_function("atan", 1, 2, bf_atan, TYPE_FLOAT, TYPE_FLOAT);
-    register_function("sinh", 1, 1, bf_sinh, TYPE_FLOAT);
-    register_function("cosh", 1, 1, bf_cosh, TYPE_FLOAT);
-    register_function("tanh", 1, 1, bf_tanh, TYPE_FLOAT);
-    register_function("acosh", 1, 1, bf_acosh, TYPE_FLOAT);
-    register_function("atanh", 1, 1, bf_atanh, TYPE_FLOAT);
-    register_function("asinh", 1, 1, bf_asinh, TYPE_FLOAT);
-    register_function("atan2", 2, 2, bf_atan2, TYPE_FLOAT, TYPE_FLOAT);
-    register_function("exp", 1, 1, bf_exp, TYPE_FLOAT);
-    register_function("log", 1, 1, bf_log, TYPE_FLOAT);
-    register_function("log10", 1, 1, bf_log10, TYPE_FLOAT);
-    register_function("ceil", 1, 1, bf_ceil, TYPE_FLOAT);
-    register_function("floor", 1, 1, bf_floor, TYPE_FLOAT);
-    register_function("trunc", 1, 1, bf_trunc, TYPE_FLOAT);
+    register_function("sqrt",  1, 1, bf_sqrt,  TYPE_NUMERIC);
+    register_function("cbrt",  1, 1, bf_cbrt,  TYPE_NUMERIC);
+    register_function("sin",   1, 1, bf_sin,   TYPE_NUMERIC);
+    register_function("cos",   1, 1, bf_cos,   TYPE_NUMERIC);
+    register_function("tan",   1, 1, bf_tan,   TYPE_NUMERIC);
+    register_function("asin",  1, 1, bf_asin,  TYPE_NUMERIC);
+    register_function("acos",  1, 1, bf_acos,  TYPE_NUMERIC);
+    register_function("atan",  1, 2, bf_atan,  TYPE_NUMERIC, TYPE_INT | TYPE_FLOAT);
+    register_function("sinh",  1, 1, bf_sinh,  TYPE_NUMERIC);
+    register_function("cosh",  1, 1, bf_cosh,  TYPE_NUMERIC);
+    register_function("tanh",  1, 1, bf_tanh,  TYPE_NUMERIC);
+    register_function("acosh", 1, 1, bf_acosh, TYPE_NUMERIC);
+    register_function("atanh", 1, 1, bf_atanh, TYPE_NUMERIC);
+    register_function("asinh", 1, 1, bf_asinh, TYPE_NUMERIC);
+    register_function("exp",   1, 1, bf_exp,   TYPE_NUMERIC);
+    register_function("log",   1, 1, bf_log,   TYPE_NUMERIC);
+    register_function("log2",  1, 1, bf_log2,  TYPE_NUMERIC);
+    register_function("log10", 1, 1, bf_log10, TYPE_NUMERIC);
+    register_function("logn",  2, 2, bf_logn,  TYPE_NUMERIC, TYPE_NUMERIC);
+    register_function("ceil",  1, 1, bf_ceil,  TYPE_NUMERIC);
+    register_function("floor", 1, 1, bf_floor, TYPE_NUMERIC);
+    register_function("trunc", 1, 1, bf_trunc, TYPE_NUMERIC);
 
     /* Possibly misplaced functions... */
-    register_function("distance", 2, 2, bf_distance, TYPE_LIST, TYPE_LIST);
+    register_function("distance",         2, 2, bf_distance,         TYPE_LIST, TYPE_LIST);
     register_function("relative_heading", 2, 2, bf_relative_heading, TYPE_LIST, TYPE_LIST);
+
+    register_function("add_test",        2,  2, bf_add_test, TYPE_NUMERIC | TYPE_LIST | TYPE_STR, TYPE_NUMERIC | TYPE_LIST | TYPE_STR);
 }

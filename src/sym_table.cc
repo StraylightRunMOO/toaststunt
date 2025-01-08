@@ -16,6 +16,7 @@
  *****************************************************************************/
 
 #include <stdio.h>
+#include <strings.h>
 
 #include "ast.h"
 #include "config.h"
@@ -71,6 +72,9 @@ first_user_slot(DB_Version version)
     if (version >= DBV_Bool)
         count += 3;
 
+    if(version >= DBV_18)
+        count += 4;
+
     return count;
 }
 
@@ -85,21 +89,21 @@ new_builtin_names(DB_Version version)
         builtins[version] = bi;
         bi->size = bi->max_size;
 
-        bi->names[SLOT_NUM] = str_dup("NUM");
-        bi->names[SLOT_OBJ] = str_dup("OBJ");
-        bi->names[SLOT_STR] = str_dup("STR");
-        bi->names[SLOT_LIST] = str_dup("LIST");
-        bi->names[SLOT_ERR] = str_dup("ERR");
-        bi->names[SLOT_PLAYER] = str_dup("player");
-        bi->names[SLOT_THIS] = str_dup("this");
-        bi->names[SLOT_CALLER] = str_dup("caller");
-        bi->names[SLOT_VERB] = str_dup("verb");
-        bi->names[SLOT_ARGS] = str_dup("args");
-        bi->names[SLOT_ARGSTR] = str_dup("argstr");
-        bi->names[SLOT_DOBJ] = str_dup("dobj");
+        bi->names[SLOT_NUM]     = str_dup("NUM");
+        bi->names[SLOT_OBJ]     = str_dup("OBJ");
+        bi->names[SLOT_STR]     = str_dup("STR");
+        bi->names[SLOT_LIST]    = str_dup("LIST");
+        bi->names[SLOT_ERR]     = str_dup("ERR");
+        bi->names[SLOT_PLAYER]  = str_dup("player");
+        bi->names[SLOT_THIS]    = str_dup("this");
+        bi->names[SLOT_CALLER]  = str_dup("caller");
+        bi->names[SLOT_VERB]    = str_dup("verb");
+        bi->names[SLOT_ARGS]    = str_dup("args");
+        bi->names[SLOT_ARGSTR]  = str_dup("argstr");
+        bi->names[SLOT_DOBJ]    = str_dup("dobj");
         bi->names[SLOT_DOBJSTR] = str_dup("dobjstr");
         bi->names[SLOT_PREPSTR] = str_dup("prepstr");
-        bi->names[SLOT_IOBJ] = str_dup("iobj");
+        bi->names[SLOT_IOBJ]    = str_dup("iobj");
         bi->names[SLOT_IOBJSTR] = str_dup("iobjstr");
 
         if (version >= DBV_Float) {
@@ -119,6 +123,12 @@ new_builtin_names(DB_Version version)
             bi->names[SLOT_BOOL] = str_dup("BOOL");
             bi->names[SLOT_TRUE] = str_dup("true");
             bi->names[SLOT_FALSE] = str_dup("false");
+        }
+        if(version >= DBV_18) {
+            bi->names[SLOT_CMDSTR]  = str_dup("cmdstr");
+            bi->names[SLOT_CALL]    = str_dup("CALL");
+            bi->names[SLOT_COMPLEX] = str_dup("COMPLEX");
+            bi->names[SLOT_MATRIX]  = str_dup("MAT");
         }
     }
     return copy_names(builtins[version]);

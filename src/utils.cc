@@ -127,7 +127,7 @@ str_hash(const char *s)
 void
 aux_free(Var v)
 {
-    switch ((int) v.type) {
+    switch (v.type) {
         case TYPE_LIST:
             myfree(v.v.list, M_LIST);
             break;
@@ -173,6 +173,14 @@ complex_free_var(Var v)
                     destroyed_waifs[v.v.waif] = false;
             }
             break;
+        case TYPE_CALL:
+            if(delref(v.v.call) == 0 && destroy_call(v)) {
+                gc_set_color(v.v.call, GC_BLACK);
+                if (!gc_is_buffered(v.v.call))
+                    myfree(v.v.call, M_CALL);
+            } else
+                gc_possible_root(v);
+            break;
         case TYPE_ANON:
             /* The first time an anonymous object's reference count drops
              * to zero, it isn't immediately destroyed/freed.  Instead, it
@@ -210,7 +218,7 @@ complex_free_var(Var v)
 void
 complex_free_var(Var v)
 {
-    switch ((int) v.type) {
+    switch (v.type) {
         case TYPE_STR:
             if (v.v.str)
                 free_str(v.v.str);
@@ -229,6 +237,12 @@ complex_free_var(Var v)
                     destroyed_waifs[v.v.waif] = false;
                 }
             }
+            break;
+        case TYPE_CALL:
+        {
+            if(delref(v.v.call) == 0 && destroy_call(v))
+                myfree(v.v.call, M_CALL);
+        }
             break;
         case TYPE_ANON:
             if (v.v.anon && delref(v.v.anon) == 0) {
@@ -267,6 +281,9 @@ complex_var_ref(Var v)
         case TYPE_WAIF:
             addref(v.v.waif);
             break;
+        case TYPE_CALL:
+            addref(v.v.call);
+            break;
         case TYPE_ANON:
             if (v.v.anon) {
                 addref(v.v.anon);
@@ -294,6 +311,9 @@ complex_var_ref(Var v)
         case TYPE_WAIF:
             addref(v.v.waif);
             break;
+        case TYPE_CALL:
+            addref(v.v.call);
+            break;
         case TYPE_ANON:
             if (v.v.anon)
                 addref(v.v.anon);
@@ -318,6 +338,10 @@ complex_var_dup(Var v)
             break;
         case TYPE_WAIF:
             v.v.waif = dup_waif(v.v.waif);
+            break;
+        case TYPE_CALL:
+            addref(v.v.call);
+            return v;
             break;
         case TYPE_ANON:
             panic_moo("cannot var_dup() anonymous objects\n");
@@ -349,6 +373,12 @@ var_refcount(Var v)
         case TYPE_WAIF:
             return refcount(v.v.waif);
             break;
+        case TYPE_CALL:
+            return refcount(v.v.call);
+            break;
+        case TYPE_MATRIX:
+            return refcount(v.v.mat);
+            break;
     }
     return 1;
 }
@@ -370,6 +400,8 @@ is_true(Var v)
             return !mapempty(v);
         case TYPE_BOOL:
             return v.v.truth == true;
+        case TYPE_CALL:
+            return v.v.call != nullptr;
         default:
             return 0;
     }
@@ -409,6 +441,12 @@ compare(Var lhs, Var rhs, int case_matters)
                 return lhs.v.anon == rhs.v.anon ? 0 : 1;
             case TYPE_BOOL:
                 return lhs.v.truth == rhs.v.truth ? 0 : 1;
+            case TYPE_CALL:
+                {
+                if(lhs.v.call->oid == rhs.v.call->oid)
+                    return strcasecmp(lhs.v.call->verbname, lhs.v.call->verbname);
+                }
+                return 0;
             default:
                 panic_moo("COMPARE: Invalid value type");
         }
@@ -421,12 +459,14 @@ equality(Var lhs, Var rhs, int case_matters)
 {
     if (lhs.type == rhs.type) {
         switch (lhs.type) {
+            case _TYPE_TYPE:
+                return (lhs.num() & rhs.num());
             case TYPE_CLEAR:
                 return 1;
             case TYPE_NONE:
                 return 1;
             case TYPE_INT:
-                return lhs.v.num == rhs.v.num;
+                return lhs.num() == rhs.num();
             case TYPE_OBJ:
                 return lhs.v.obj == rhs.v.obj;
             case TYPE_ERR:
@@ -454,16 +494,18 @@ equality(Var lhs, Var rhs, int case_matters)
                 return lhs.v.waif == rhs.v.waif;
             case TYPE_BOOL:
                 return lhs.v.truth == rhs.v.truth;
+            case TYPE_COMPLEX:
+                return lhs.complex() == rhs.complex();
             default:
                 panic_moo("EQUALITY: Unknown value type");
         }
     } else {
-        if (lhs.type == TYPE_BOOL && rhs.type == TYPE_INT) {
+        if(lhs.type == TYPE_BOOL && rhs.type == TYPE_INT)
             return rhs.v.num == lhs.v.truth;
-        }
-        else         if (rhs.type == TYPE_BOOL && lhs.type == TYPE_INT) {
+        else if(rhs.type == TYPE_BOOL && lhs.type == TYPE_INT)
             return lhs.v.num == rhs.v.truth;
-        }
+        else if(lhs.is_type() || rhs.is_type())
+            return (lhs.num() & rhs.num());
     }
     return 0;
 }

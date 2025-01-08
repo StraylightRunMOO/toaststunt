@@ -186,6 +186,16 @@ alloc_verb(Expr * obj, Expr * verb, Arg_List * args)
     return result;
 }
 
+Expr *
+alloc_call_handle(Expr *obj, Expr *verb)
+{
+    Expr *result = (Expr *)alloc_expr(EXPR_CALL_HANDLE);
+
+    result->e.handle.obj = obj;
+    result->e.handle.verb = verb;
+    return result;
+}
+
 Map_List *
 alloc_map_list(Expr * key, Expr * value)
 {
@@ -315,7 +325,10 @@ free_expr(Expr * expr)
             free_expr(expr->e.verb.verb);
             free_arg_list(expr->e.verb.args);
             break;
-
+        case EXPR_CALL_HANDLE:
+            free_expr(expr->e.handle.obj);
+            free_expr(expr->e.handle.verb);
+            break;
         case EXPR_RANGE:
             free_expr(expr->e.range.base);
             free_expr(expr->e.range.from);
