@@ -35,8 +35,9 @@ extern Var maprange(Var, int, int);
 extern enum error maprangeset(Var, int, int, Var, Var*);
 extern bool maphaskey(Var, Var);
 extern int mapkeyindex(Var, Var);
+extern Var mapconcat(Var, Var);
 
 typedef std::function<int(Var, Var, int)> map_callback;
-extern int mapforeach(Var, map_callback);
+extern int mapforeach(Var, map_callback, bool reverse = false);
 
 #endif

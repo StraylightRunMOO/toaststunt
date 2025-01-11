@@ -1286,12 +1286,10 @@ do_test:
             case OP_PUT_TEMP:
                 RUN_ACTIV.temp = var_ref(TOP_RT_VALUE);
                 break;
-
             case OP_PUSH_TEMP:
                 PUSH(RUN_ACTIV.temp);
                 RUN_ACTIV.temp.type = TYPE_NONE;
                 break;
-
             case OP_EQ:
             case OP_NE:
             {
@@ -1498,6 +1496,8 @@ finish_comparison:
                     } else {
                         ans = listappend(var_ref(lhs), var_ref(rhs));
                     }
+                } else if(lhs.type == TYPE_MAP && rhs.type == TYPE_MAP) {
+                    ans = mapconcat(var_ref(lhs), var_ref(rhs));
                 } else {
                     ans.type = TYPE_ERR;
                     ans.v.err = E_TYPE;
@@ -1703,7 +1703,7 @@ finish_comparison:
                     } else if (maplookup(list, index, &value, 0) == nullptr) {
                         PUSH_ERROR(E_RANGE);
                     } else {
-                        PUSH(value);
+                        PUSH_REF(value);
                     }
                 } else if (list.type == TYPE_LIST) {
                     if (index.type != TYPE_INT) {
@@ -1725,30 +1725,9 @@ finish_comparison:
             {
                 Var base, from, to;
 
-                to = POP();
+                to   = POP();
                 from = POP();
                 base = POP();   /* should be map, list or string */
-
-                if(RUN_ACTIV.temp.type == TYPE_BOOL && RUN_ACTIV.temp.v.truth) {
-                    if(base.type == TYPE_MAP) {
-                        int from_ = mapkeyindex(base, var_ref(from));
-                        if(from_ > 0) {
-                            free_var(from);
-                            from = Var::new_int(from_);
-                        }
-                    }
-
-                    if(base.type == TYPE_MAP) {
-                        int to_ = mapkeyindex(base, var_ref(to));
-                        if(to_ >= from.v.num) {
-                            free_var(to);
-                            to = Var::new_int(to_);
-                        }
-                    }
-
-                    RUN_ACTIV.temp.v.num = 0;
-                    RUN_ACTIV.temp.type = TYPE_CLEAR;
-                }
 
                 if (base.type != TYPE_MAP && base.type != TYPE_LIST
                         && base.type != TYPE_STR) {
@@ -1772,32 +1751,11 @@ finish_comparison:
                     free_var(base);
                     PUSH_TYPE_MISMATCH(1, to_from_type, TYPE_INT);
                 } else if (base.type == TYPE_MAP) {
-                    Var iterfrom, iterto;
-                    int rel = compare(from, to, 0);
-                    iterfrom = Var::new_int(from.v.num);
-                    iterto = Var::new_int(to.v.num);
-
-                    if ((rel <= 0) && (iterfrom.is_none() || iterto.is_none())) {
-                        free_var(to);
-                        free_var(from);
-                        free_var(iterto);
-                        free_var(iterfrom);
-                        free_var(base);
-                        PUSH_ERROR(E_RANGE);
-                    } else if (rel > 0) {
-                        PUSH(new_map(0));
-                        free_var(to);
-                        free_var(from);
-                        free_var(iterto);
-                        free_var(iterfrom);
-                        free_var(base);
-                    } else {
-                        PUSH(maprange(base, iterfrom.v.num, iterto.v.num));
-                        free_var(from);
-                        free_var(to);
-                        free_var(iterto);
-                        free_var(iterfrom);
-                    }
+                    int start = (from.type == TYPE_INT) ? from.num() : mapkeyindex(base, from);
+                    int end   = (to.type == TYPE_INT)   ? to.num()   : mapkeyindex(base, to);
+                    PUSH(maprange(base, start, end));
+                    free_var(from);
+                    free_var(to);
                 } else {
                     int len = (base.type == TYPE_STR ? strlen(base.str()) : base.length());
                     if(to.v.num < 0) to.v.num += len;
@@ -1965,9 +1923,9 @@ finish_comparison:
             {
                 Var obj, propname, rhs;
 
-                rhs = POP();        /* any type */
+                rhs      = POP();   /* any type */
                 propname = POP();   /* should be string */
-                obj = POP();        /* should be an object */
+                obj      = POP();   /* should be an object */
                 if (obj.type == TYPE_WAIF && propname.type == TYPE_STR) {
                     enum error err;
 
@@ -2430,9 +2388,9 @@ else if (obj.type == TYPE_##t1) {           \
                         Var base, from, to, value;
 
                         value = POP();
-                        to = POP();
-                        from = POP();
-                        base = POP();   /* map, list or string */
+                        to    = POP();
+                        from  = POP();
+                        base  = POP();   /* map, list or string */
 
                         if ((base.type != TYPE_MAP && base.type != TYPE_LIST
                                 && base.type != TYPE_STR)
@@ -2545,9 +2503,8 @@ else if (obj.type == TYPE_##t1) {           \
                             v.type = TYPE_INT;
                             v.v.num = item.length() > 0 ? 1 : 0;
                             PUSH(v);
-                        } else if ((item.type == TYPE_MAP) && mapfirst(item, &v) > 0) {
-                            RUN_ACTIV.temp = Var::new_bool(true);
-                            PUSH(v);
+                        } else if (item.type == TYPE_MAP) {
+                            PUSH(Var::new_int(1));
                         } else
                             PUSH_TYPE_MISMATCH(3, item.type, TYPE_STR, TYPE_LIST, TYPE_MAP);
                     }
@@ -2564,12 +2521,10 @@ else if (obj.type == TYPE_##t1) {           \
                             v.v.num = memo_strlen(item.v.str);
                             PUSH(v);
                         } else if (item.type == TYPE_LIST) {
-                            v.type = TYPE_INT;
-                            v.v.num = item.length();
+                            v = Var::new_int(item.length());
                             PUSH(v);
-                        } else if (item.type == TYPE_MAP && maplast(item, &v) > 0) {
-                            RUN_ACTIV.temp = Var::new_bool(true);
-                            PUSH(v);
+                        } else if (item.type == TYPE_MAP) { // && maplast(item, &v) > 0) {
+                            PUSH(Var::new_int(maplength(item)));
                         } else
                             PUSH_TYPE_MISMATCH(3, item.type, TYPE_STR, TYPE_LIST, TYPE_MAP);
                     }

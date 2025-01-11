@@ -27,7 +27,9 @@
 #include "structures.h"
 #include "server.h"
 #include "match.h"
+#include "map.h"
 #include "parse_cmd.h"
+#include "server.h"
 #include "storage.h"
 #include "unparse.h"
 #include "utils.h"
@@ -44,7 +46,8 @@ static inline Var
 get_aliases(Objid what, Objid player)
 {
     Var aliases;
-    if(server_flag_option("match_aliases_verb", 0) > 0) {
+
+    if(server_flag_option_cached(SVO_MATCH_ALIASES_VERB) > 0) {
         run_server_task(player, Var::new_obj(what), "aliases", new_list(0), "", &aliases);
         if(aliases.type == TYPE_LIST) return aliases;
         free_var(aliases);
@@ -67,7 +70,7 @@ static inline Var
 get_contents(Objid what, Objid player)
 {
     Var contents;
-    if(server_flag_option("match_contents_verb", 0) > 0) {
+    if(server_flag_option_cached(SVO_MATCH_CONTENTS_VERB) > 0) {
         run_server_task(player, Var::new_obj(what), "contents", new_list(0), "", &contents);
         if(contents.type == TYPE_LIST) return contents;
         free_var(contents);
@@ -201,19 +204,35 @@ complex_match(Var subject, Var targets, bool use_ordinal = true)
     Var full_matches = new_list(0);
     Var part_matches = new_list(0);
 
-    listforeach(targets, [&tokens, &full_matches, &part_matches](Var target, int i) -> int {
-        Var aliases = prepare_tokens(var_ref(target));
+    if(targets.type == TYPE_LIST) {
+        listforeach(targets, [&tokens, &full_matches, &part_matches](Var target, int i) -> int {
+            Var aliases = prepare_tokens(var_ref(target));
 
-        if(!aliases.length()) return 0;
+            if(!aliases.length()) return 0;
 
-        switch(match_tokens(tokens, aliases)) {
-        case MATCH_NONE: break;
-        case MATCH_FULL: full_matches = listappend(full_matches, Var::new_int(i));
-        case MATCH_PART: part_matches = listappend(part_matches, Var::new_int(i));
-        }
+            switch(match_tokens(tokens, aliases)) {
+            case MATCH_NONE: break;
+            case MATCH_FULL: full_matches = listappend(full_matches, Var::new_int(i));
+            case MATCH_PART: part_matches = listappend(part_matches, Var::new_int(i));
+            }
 
-        return 0;
-    });
+            return 0;
+        });
+    } else { // TYPE_MAP
+        mapforeach(targets, [&tokens, &full_matches, &part_matches](Var key, Var target, int i) -> int {
+            Var aliases = prepare_tokens(var_ref(target));
+
+            if(!aliases.length()) return 0;
+
+            switch(match_tokens(tokens, aliases)) {
+            case MATCH_NONE: break;
+            case MATCH_FULL: full_matches = listappend(full_matches, key);
+            case MATCH_PART: part_matches = listappend(part_matches, key);
+            }
+
+            return 0;
+        });
+    }
 
     Var matches;
     if(use_ordinal && ordinal.num() > 0) {
@@ -283,7 +302,7 @@ match_object(Objid player, const char *name)
 {
     if (name[0] == '\0')
         return NOTHING;
-    if (name[0] == '#') {
+    if (name[0] == '#' && is_programmer(player)) {
         char *p;
         Objid r = strtol(name + 1, &p, 10);
 
@@ -324,7 +343,7 @@ bf_parse_ordinal(Var arglist, Byte next, void *vdata, Objid progr)
 static package 
 bf_tokenize(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    Var r = prepare_tokens(var_ref(arglist[1]));
+    Var r = prepare_tokens(arglist[1].type == TYPE_LIST ? var_ref(arglist[1]) : explode(arglist[1], ' ', false));
     free_var(arglist);
     return make_var_pack(r);
 }
@@ -332,7 +351,30 @@ bf_tokenize(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_complex_match(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    Var r = complex_match(var_ref(arglist[1]), var_ref(arglist[2]));
+    auto nargs = arglist.length();
+
+    if(nargs >= 3 && (arglist[2].type == TYPE_MAP || arglist[2].length() != arglist[3].length())) {
+        free_var(arglist);
+        return make_error_pack(E_INVARG);
+    }
+
+    Var r, matches = r = complex_match(var_ref(arglist[1]), var_ref(arglist[2]));
+
+    if(nargs >= 3 && matches.type != TYPE_OBJ) {
+        Var items = arglist[3];
+        if(matches.type == TYPE_INT)
+            r = var_ref(items[matches]);
+        else if(matches.type == TYPE_LIST) {
+            r = new_list(matches.length());
+            listforeach(matches, [&items, &r](Var value, int index) -> int {
+                r[index] = var_ref(items[index]);
+                return 0;
+            });
+        }
+
+        free_var(matches);
+    }
+
     free_var(arglist);
     return make_var_pack(r);
 }
@@ -340,7 +382,7 @@ bf_complex_match(Var arglist, Byte next, void *vdata, Objid progr)
 void
 register_match(void)
 {
+    register_function("tokenize",      1, 1, bf_tokenize, TYPE_LIST | TYPE_STR);
     register_function("parse_ordinal", 1, 1, bf_parse_ordinal, TYPE_STR);
-    register_function("tokenize",      1, 1, bf_tokenize, TYPE_LIST);
-    register_function("complex_match", 2, 2, bf_complex_match, TYPE_STR, TYPE_LIST);
+    register_function("complex_match", 2, 3, bf_complex_match, TYPE_STR, TYPE_LIST | TYPE_MAP, TYPE_LIST);
 }

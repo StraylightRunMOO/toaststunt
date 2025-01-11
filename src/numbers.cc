@@ -1112,18 +1112,6 @@ bf_relative_heading(Var arglist, Byte next, void *vdata, Objid progr)
     return make_var_pack(s);
 }
 
-static package
-bf_add_test(Var arglist, Byte next, void *vdata, Objid progr)
-{
-    Var lhs = arglist[1];
-    Var rhs = arglist[2];
-
-    Var r = lhs + rhs;
-
-    free_var(arglist);
-    return make_var_pack(r);
-}
-
 Var zero;           /* useful constant */
 
 void
@@ -1179,6 +1167,4 @@ register_numbers(void)
     /* Possibly misplaced functions... */
     register_function("distance",         2, 2, bf_distance,         TYPE_LIST, TYPE_LIST);
     register_function("relative_heading", 2, 2, bf_relative_heading, TYPE_LIST, TYPE_LIST);
-
-    register_function("add_test",        2,  2, bf_add_test, TYPE_NUMERIC | TYPE_LIST | TYPE_STR, TYPE_NUMERIC | TYPE_LIST | TYPE_STR);
 }

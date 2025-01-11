@@ -494,6 +494,12 @@ equality(Var lhs, Var rhs, int case_matters)
                 return lhs.v.waif == rhs.v.waif;
             case TYPE_BOOL:
                 return lhs.v.truth == rhs.v.truth;
+            case TYPE_CALL:
+                if(lhs.v.call->ptr == rhs.v.call->ptr)
+                    return 1;
+                else if(db_verb_definer(*lhs.v.call) == db_verb_definer(*rhs.v.call) && memo_strlen(lhs.v.call->verbname) == memo_strlen(rhs.v.call->verbname) && !strcasecmp(lhs.v.str, rhs.v.str))
+                    return 1;
+                return 0;
             case TYPE_COMPLEX:
                 return lhs.complex() == rhs.complex();
             default:

@@ -236,22 +236,22 @@ std::size_t Var::hash() const {
 
   switch (type) {
   case TYPE_STR:
-    hash = static_cast<std::size_t>(XXH64((char*)v.str, memo_strlen(v.str), MAP_HASH_SEED1) ^ ~type);
+    hash = static_cast<std::size_t>(XXH64((char*)v.str, memo_strlen(v.str), MAP_HASH_SEED1) ^ type);
     break;
   case TYPE_INT:
-    hash = static_cast<std::size_t>(XXH64((char*)(&v.num), sizeof(v.num), MAP_HASH_SEED1) ^ ~type);
+    hash = static_cast<std::size_t>(XXH64((char*)(&v.num), sizeof(v.num), MAP_HASH_SEED1) ^ type);
     break;
   case TYPE_FLOAT:
-    hash = static_cast<std::size_t>(XXH64((char*)(&v.fnum), sizeof(v.fnum), MAP_HASH_SEED1) ^ ~type);
+    hash = static_cast<std::size_t>(XXH64((char*)(&v.fnum), sizeof(v.fnum), MAP_HASH_SEED1) ^ type);
     break;
   case TYPE_OBJ:
-    hash = static_cast<std::size_t>(XXH64((char*)(&v.obj), sizeof(Var), MAP_HASH_SEED1) ^ ~type);
+    hash = static_cast<std::size_t>(XXH64((char*)(&v.obj), sizeof(Var), MAP_HASH_SEED1) ^ type);
     break;
   case TYPE_ERR:
-    hash = static_cast<std::size_t>(XXH64((char*)(&v.err), sizeof(v.err), MAP_HASH_SEED1) ^ ~type);
+    hash = static_cast<std::size_t>(XXH64((char*)(&v.err), sizeof(v.err), MAP_HASH_SEED1) ^ type);
     break;
   case TYPE_BOOL:
-    hash = static_cast<std::size_t>(XXH64((char*)(&v.truth), sizeof(v.truth), MAP_HASH_SEED1) ^ ~type);
+    hash = static_cast<std::size_t>(XXH64((char*)(&v.truth), sizeof(v.truth), MAP_HASH_SEED1) ^ type);
     break;
   case TYPE_LIST:
     listforeach(*this, [&hash](Var value, int index) -> int {
@@ -265,6 +265,16 @@ std::size_t Var::hash() const {
       hash ^= (value.hash() ^ key.hash());
       return 0;
     });
+    break;
+  case TYPE_CALL:
+    {
+    Var verbname = str_ref_to_var(v.call->verbname);
+    hash = db_verb_definer(*v.call).hash() ^ verbname.hash() ^ type;
+    free_var(verbname);
+    }
+    break;
+  case TYPE_COMPLEX:
+    hash = Var::new_float(v.complex.real()).hash() ^ Var::new_float(v.complex.imag()).hash() ^ type;
     break;
   default:
     hash = 0;

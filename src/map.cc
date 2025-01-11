@@ -60,6 +60,10 @@ map_compare(const void *a, const void *b, void *udata)
             return std::fabs(lhs.v.fnum - rhs.v.fnum) < EPSILON;
         case TYPE_BOOL:
             return lhs.v.truth != rhs.v.truth;
+        case TYPE_CALL:
+            return !equality(lhs, rhs, false);
+        case TYPE_COMPLEX:
+            return !equality(lhs, rhs, false);
         default:
             break;
     }
@@ -76,7 +80,7 @@ map_hash(const void *item, uint64_t seed0, uint64_t seed1)
     case TYPE_STR:
         return HASH_FN(entry->key.v.str, memo_strlen(entry->key.v.str), SEED0, SEED1);
     case TYPE_INT:
-    return HASH_FN(&(entry->key.v.num), sizeof(Num), SEED0, SEED1);
+        return HASH_FN(&(entry->key.v.num), sizeof(Num), SEED0, SEED1);
     case TYPE_FLOAT:
         return HASH_FN(&(entry->key.v.fnum), sizeof(double), SEED0, SEED1);
     case TYPE_OBJ:
@@ -85,6 +89,10 @@ map_hash(const void *item, uint64_t seed0, uint64_t seed1)
         return HASH_FN(&(entry->key.v.err), sizeof(enum error), SEED0, SEED1);
     case TYPE_BOOL:
         return HASH_FN(&(entry->key.v.truth), sizeof(bool), SEED0, SEED1);
+    case TYPE_CALL:
+        return entry->key.hash();
+    case TYPE_COMPLEX:
+        return entry->key.hash();
     default:
     break;
     }
@@ -261,7 +269,7 @@ mapinsert(Var map, Var key, Var value)
      * boundary conditions in the looping logic), and keys that are
      * collections (for which `compare' does not currently work).
      */
-    if (key.type == TYPE_NONE || key.type == TYPE_CLEAR || (key.is_collection() && TYPE_ANON != key.type))
+    if (key.type == TYPE_NONE || key.type == TYPE_CLEAR || key.type == TYPE_LIST)
         panic_moo("MAPINSERT: invalid key");
 
     size_t size_change = (value_bytes(key) + value_bytes(value));
@@ -299,10 +307,23 @@ mapinsert(Var map, Var key, Var value)
     return map;
 }
 
-int 
+int
 mapequal(Var lhs, Var rhs, int case_matters)
 {
-    return 0; // TODO
+    Var keys_lhs = mapkeys(lhs);
+    Var keys_rhs = mapkeys(rhs);
+    
+    if(!listequal(keys_lhs, keys_rhs, false)) return 0;
+
+    return listforeach(keys_lhs, [&lhs, &rhs, &case_matters](Var key, int index) -> int {
+        Var value_lhs;
+        Var value_rhs;
+
+        maplookup(lhs, key, &value_lhs, 0);
+        maplookup(rhs, key, &value_rhs, 0);
+
+        return (equality(value_lhs, value_rhs, case_matters)) ? 1 : 0;
+    });
 }
 
 static inline bool 
@@ -369,7 +390,7 @@ map_sizeof(Var map)
  * `mapforeach()' can be called from contexts where exception handling
  * is in effect.
  */
-int mapforeach(Var map, map_callback func)
+int mapforeach(Var map, map_callback func, bool reverse)
 { /* does NOT consume `map' */
     if(maplength(map) == 0)
         return 0;
@@ -382,12 +403,12 @@ int mapforeach(Var map, map_callback func)
                 return func(key, value, index);
             }
             return 0;
-        });
+        }, reverse);
     } else {
         size_t iter = 1;
         map_entry *item;
         int index = 0;
-        while (hashmap_iter(map.v.map, &iter, (void**)&item, false)) {
+        while (hashmap_iter(map.v.map, &iter, (void**)&item, reverse)) {
             if(item->value.type == TYPE_CLEAR) continue;
             int ret = func(item->key, item->value, ++index);
             if(ret) return ret;
@@ -472,16 +493,24 @@ mapkeyindex(Var map, Var key)
 Var
 maprange(Var map, int from, int to)
 {   /* consumes `map' */
-    if(to > maplength(map) || from <= 0 || from > to) {
+    auto len = maplength(map);
+
+    if(to < 0) to += len;
+    if(from < 0) from += len;
+    bool reverse = from > to;
+
+    if(reverse) std::swap(from, to);
+
+    if(to > len || from <= 0) {
         free_var(map);
         map = Var::new_err(E_RANGE);
     } else {
         Var _new = new_map(to - from + 1);
-        mapforeach(map, [&_new, &from, &to](Var key, Var value, int index) -> int {
+        mapforeach(map, [&_new, &from, &to, &reverse](Var key, Var value, int index) -> int {
             if(index >= from && index <= to)
                 mapinsert(_new, var_ref(key), var_ref(value));
-            return index <= to ? 0 : 1;
-        });
+            return (reverse && index > from) || (!reverse && index < to) ? 0 : 1;
+        }, reverse);
         free_var(map);
         map = _new;
     }
@@ -546,31 +575,56 @@ mapstrlookup(Var map, const char *key, Var *value, int case_matters)
 enum error 
 maprangeset(Var map, int from, int to, Var value, Var *_new)
 {
-    if(to > maplength(map) || from <= 0 || from >= to)
-        return E_RANGE;
+    Var r;
+    auto len = maplength(map);
 
-    Var r = new_map(maplength(map) + maplength(value) - (to - from) + 1);
+    if(to < 0) to += len;
+    if(from < 0) from += len;
+    bool reverse = from > to;
 
-    mapforeach(map, [&r, &from](Var key, Var value, int index) -> int {
-        int before = (index < from) ? 1 : 0;
-        if(before) r = mapinsert(r, var_ref(key), var_ref(value));
-        return before;
-    });
+    if(reverse) std::swap(from, to);
 
-    mapforeach(value, [&r](Var key, Var value, int index) -> int {
-        r = mapinsert(r, var_ref(key), var_ref(value));
-        return 0;
-    });
+    if(to > len || from <= 0) {
+        free_var(map);
+        r = Var::new_err(E_RANGE);
+    } else {
+        r = new_map(maplength(map) + maplength(value) - (to - from) + 1);
 
-    mapforeach(map, [&r, &to](Var key, Var value, int index) -> int {
-        if(index > to) r = mapinsert(r, var_ref(key), var_ref(value));
-        return 0;
-    });
+        mapforeach(map, [&r, &from](Var key, Var value, int index) -> int {
+            int before = (index < from) ? 1 : 0;
+            if(before) r = mapinsert(r, var_ref(key), var_ref(value));
+            return before;
+        });
+
+        mapforeach(value, [&r](Var key, Var value, int index) -> int {
+            r = mapinsert(r, var_ref(key), var_ref(value));
+            return 0;
+        }, reverse);
+
+        mapforeach(map, [&r, &to](Var key, Var value, int index) -> int {
+            if(index > to) r = mapinsert(r, var_ref(key), var_ref(value));
+            return 0;
+        });
+    }
 
     free_var(*_new);
     *_new = r;
 
     return E_NONE;
+}
+
+Var
+mapconcat(Var lhs, Var rhs) {
+    Var map = var_dup(lhs);
+    mapforeach(rhs, [&map](Var key, Var value, int index) -> int {
+        mapinsert(map, var_ref(key), var_ref(value));
+        return 0;
+    });
+
+    free_var(lhs);
+    free_var(rhs);
+
+    return map;
 }
 
 bool
@@ -603,17 +657,16 @@ static package
 bf_mapkeys(Var arglist, Byte next, void *vdata, Objid progr)
 {
     Var map = arglist[1];
-    auto len = maplength(map);
 
-    if(len == 0) {
+    if(maplength(map) == 0) {
         free_var(arglist);
         return make_var_pack(new_list(0));
     }
 
-    Var map_keys = mapkeys(map);
+    Var map_keys = var_ref(mapkeys(map));
     if(map_keys.length() > 0) {
         free_var(arglist);
-        return make_var_pack(var_ref(map_keys));
+        return make_var_pack(map_keys);
     }
 
     map_keys = new_list(maplength(map));

@@ -34,6 +34,7 @@
 #include "numbers.h"
 #include "options.h"
 #include "pattern.h"
+#include "server.h"
 #include "streams.h"
 #include "storage.h"
 #include "structures.h"
@@ -159,14 +160,19 @@ list_dup(Var list)
 }
 
 int 
-listforeach(Var list, list_callback func) 
+listforeach(Var list, list_callback func, bool reverse) 
 { /* does NOT consume `list' */
     auto len = list.length();
 
     int ret;
 
-    for(auto i = 1; i <= len; i++)
-        if ((ret = func(list[i], i))) return ret;
+    if(!reverse) {
+        for(auto i = 1; i <= len; i++)
+            if ((ret = func(list[i], i))) return ret;
+    } else {
+        for(auto i = len; i >= 1; i--)
+            if ((ret = func(list[i], i))) return ret;
+    }
 
     return 0;
 }
@@ -543,7 +549,7 @@ stream_add_tostr(Stream * s, Var v)
             break;
         case TYPE_OBJ:
         {
-            if(server_int_option("corify_obj_tostr", 0) > 0) {
+            if(server_flag_option_cached(SVO_CORIFY_OBJ_TOSTR) > 0) {
                 Var c = corified_as(v, 0);
                 stream_printf(s, "%s", c.v.str);
                 free_var(c);
@@ -627,7 +633,7 @@ unparse_value(Stream * s, Var v)
             break;
         case TYPE_OBJ:
         {
-            if(server_int_option("corify_obj_toliteral", 0) > 0) {
+            if(server_flag_option_cached(SVO_CORIFY_OBJ_TOLITERAL) > 0) {
                 Var c = corified_as(v, 0);
                 stream_printf(s, "%s", c.v.str);
                 free_var(c);

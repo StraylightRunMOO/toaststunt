@@ -41,7 +41,7 @@ extern int listequal(Var lhs, Var rhs, int case_matters);
 extern int list_sizeof(Var *list);
 
 typedef std::function<int(Var, int)> list_callback;
-extern int listforeach(Var list, list_callback func);
+extern int listforeach(Var list, list_callback func, bool reverse=false);
 
 extern Var set_intersection(Var s1, Var s2, bool count_dup);
 
