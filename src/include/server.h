@@ -265,6 +265,18 @@ int proxy_connected(Objid connection, char *command);
 	  flag, 0, /* already canonical */								\
       )																\
                                                                     \
+  DEFINE( SVO_MATCH_MODE, match_mode,               				\
+  	int, 0,			    											\
+  	)																\
+																	\
+  DEFINE( SVO_CORIFY_OBJ_TOSTR, corify_obj_tostr,		     		\
+  	flag, 0,														\
+  	)																\
+																	\
+  DEFINE( SVO_CORIFY_OBJ_TOLITERAL, corify_obj_toliteral,	     	\
+  	flag, 0,														\
+  	)																\
+																	\
   DEFINE( SVO_MAX_QUEUED_OUTPUT, max_queued_output,			        \
   																	\
 	  int, MAX_QUEUED_OUTPUT,									    \

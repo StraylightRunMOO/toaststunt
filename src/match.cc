@@ -47,21 +47,19 @@ get_aliases(Objid what, Objid player)
 {
     Var aliases;
 
-    if(server_flag_option_cached(SVO_MATCH_ALIASES_VERB) > 0) {
+    if(server_int_option_cached(SVO_MATCH_MODE) > 0) {
         run_server_task(player, Var::new_obj(what), "aliases", new_list(0), "", &aliases);
         if(aliases.type == TYPE_LIST) return aliases;
         free_var(aliases);
     }
 
-    aliases = db_property_value_default(what, "aliases", new_list(0));
+    aliases = var_dup(db_property_value_default(what, "aliases", new_list(0)));
     if(aliases.type != TYPE_LIST) {
         free_var(aliases);
         aliases = new_list(0);
-    }    
+    }
 
-    Var name = str_dup_to_var(db_object_name(what));
-    aliases = listconcat(var_ref(aliases), explode(name, ' ', false));
-    free_var(name);
+    aliases = listconcat(aliases, explode(str_dup_to_var(db_object_name(what)), ' ', false));
 
     return aliases;
 }
@@ -70,19 +68,38 @@ static inline Var
 get_contents(Objid what, Objid player)
 {
     Var contents;
-    if(server_flag_option_cached(SVO_MATCH_CONTENTS_VERB) > 0) {
+    if(server_int_option_cached(SVO_MATCH_MODE) > 0) {
         run_server_task(player, Var::new_obj(what), "contents", new_list(0), "", &contents);
         if(contents.type == TYPE_LIST) return contents;
         free_var(contents);
     }
 
-    contents = var_ref(db_property_value_default(what, "contents", new_list(0)));
+    contents = var_dup(db_property_value_default(what, "contents", new_list(0)));
     return contents;
 }
 
-static inline Var
+static inline std::pair<Var, Var> 
 contents_for_match(Objid player)
 {
+    std::pair<Var, Var> ret;
+
+    if(server_int_option_cached(SVO_MATCH_MODE) >= 2) {
+        Var contents_for_match;
+        run_server_task(player, Var::new_obj(player), "contents_for_match", new_list(0), "", &contents_for_match);
+
+        if(contents_for_match.type == TYPE_LIST && 
+           contents_for_match.length() == 2 && 
+           contents_for_match[1].type == TYPE_LIST && 
+           contents_for_match[2].type == TYPE_LIST && 
+           contents_for_match[1].length() == contents_for_match[2].length()) 
+        {
+            ret = std::make_pair(var_dup(contents_for_match[1]), var_dup(contents_for_match[2]));
+            free_var(contents_for_match);
+            return ret;
+        }
+    }
+
+    Var aliases  = new_list(0);
     Var contents = new_list(0);
 
     int step;
@@ -92,39 +109,51 @@ contents_for_match(Objid player)
         contents = listconcat(contents, get_contents(oid, player));
     }
 
-    return contents;
+    listforeach(contents, [&player, &aliases](Var value, int index) -> int {
+        aliases = listappend(aliases, get_aliases(value.obj(), player));
+        return 0;
+    });
+
+    ret = std::make_pair(aliases, contents);
+
+    return ret;
 }
 
 static inline Var
 prepare_tokens(Var tokens)
 {
-    if(tokens.type != TYPE_LIST) {
+    if(tokens.type == TYPE_STR) {
+        tokens = explode(tokens, ' ', false);
+    } else if(tokens.type != TYPE_LIST) {
         free_var(tokens);
         return new_list(0);
     }
 
     Var r = new_list(0);
     listforeach(tokens, [&r](Var value, int index) -> int {
-        if(value.type == TYPE_STR && value.str() != nullptr && value.str()[0] != '\0' && value.length() >= 3) {
-            r = listconcat(r, explode(lowercase(value), ' ', false));
+        if(value.type == TYPE_STR && value.str() != nullptr && value.str()[0] != '\0') {
+            r = listconcat(r, explode(lowercase(var_dup(value)), ' ', false));
         }
         return 0;
     });
 
     free_var(tokens);
-    if(!r.length()) return r;
-
-    std::qsort(
-        (void*)&r.v.list[1],
-        r.length(),
-        sizeof(Var),
-        [](const void* x, const void* y)
-        {
-            const Var lhs = *static_cast<const Var*>(x);
-            const Var rhs = *static_cast<const Var*>(y);
-            return strcasecmp(lhs.str(), rhs.str());
-        }
-    );
+    
+    if(!r.length()) 
+        return r;
+    else if(r.length() >= 2) {
+        std::qsort(
+            (void*)&r.v.list[1],
+            r.length(),
+            sizeof(Var),
+            [](const void* x, const void* y)
+            {
+                const Var lhs = *static_cast<const Var*>(x);
+                const Var rhs = *static_cast<const Var*>(y);
+                return strcasecmp(lhs.str(), rhs.str());
+            }
+        );
+    }
 
     return r;
 }
@@ -133,21 +162,25 @@ static enum match_type
 match_tokens(Var tokens, Var aliases)
 {
     enum match_type token_match, match = MATCH_NONE;
-    
+
     for(auto i=1; i<=tokens.length(); i++) {
         token_match = MATCH_NONE;
-        auto len = strlen(tokens[i].str());
+        auto len = memo_strlen(tokens[i].str());
         for(auto j=1; j<=aliases.length(); j++) {
-            auto len_alias = strlen(aliases[j].str());
+            auto len_alias = memo_strlen(aliases[j].str());
             if(len > len_alias) continue;
-            
-            if(strncmp(aliases[j].str(), tokens[i].str(), len) == 0) {
+
+            if(len == 1 && len_alias == 1 && *aliases[j].str() == *tokens[i].str()) {
+                token_match = MATCH_FULL;
+                break;
+            } else if(strncasecmp(aliases[j].str(), tokens[i].str(), len) == 0) {
                 token_match = (len == len_alias) ? MATCH_FULL : MATCH_PART;
                 break;
             }
         }
 
         if(token_match == MATCH_NONE) return token_match;
+
         match = std::max(match, token_match);
     }
 
@@ -188,16 +221,17 @@ complex_match(Var subject, Var targets, bool use_ordinal = true)
         return Var::new_obj(FAILED_MATCH);
     }
 
-    Var ordinal = Var::new_int(0);
     Var tokens  = explode(var_ref(subject), ' ', false);
+    Var ordinal = Var::new_int(0);
 
-    if(use_ordinal)
+    if(use_ordinal && tokens.length() > 1)
         std::tie(ordinal, tokens[1]) = parse_ordinal(tokens[1]);
 
     tokens = prepare_tokens(tokens);
 
     if(!tokens.length()) {
         free_var(subject);
+        free_var(targets);
         return Var::new_obj(FAILED_MATCH);
     }
 
@@ -207,7 +241,6 @@ complex_match(Var subject, Var targets, bool use_ordinal = true)
     if(targets.type == TYPE_LIST) {
         listforeach(targets, [&tokens, &full_matches, &part_matches](Var target, int i) -> int {
             Var aliases = prepare_tokens(var_ref(target));
-
             if(!aliases.length()) return 0;
 
             switch(match_tokens(tokens, aliases)) {
@@ -221,7 +254,6 @@ complex_match(Var subject, Var targets, bool use_ordinal = true)
     } else { // TYPE_MAP
         mapforeach(targets, [&tokens, &full_matches, &part_matches](Var key, Var target, int i) -> int {
             Var aliases = prepare_tokens(var_ref(target));
-
             if(!aliases.length()) return 0;
 
             switch(match_tokens(tokens, aliases)) {
@@ -233,6 +265,8 @@ complex_match(Var subject, Var targets, bool use_ordinal = true)
             return 0;
         });
     }
+
+    free_var(tokens);
 
     Var matches;
     if(use_ordinal && ordinal.num() > 0) {
@@ -258,7 +292,6 @@ complex_match(Var subject, Var targets, bool use_ordinal = true)
         matches = r;
     }
 
-    free_var(tokens);
     free_var(subject);
     free_var(targets);
     free_var(full_matches);
@@ -268,19 +301,20 @@ complex_match(Var subject, Var targets, bool use_ordinal = true)
 }
 
 static Objid
-match_contents(Objid player, const char *name)
+match_contents(Objid player, Var subject)
 {
-    if (!valid(player)) return FAILED_MATCH;
+    if (!valid(player)) {
+        free_var(subject);
+        return FAILED_MATCH;
+    }
 
-    Objid ret    = AMBIGUOUS;
-    Var aliases  = new_list(0);
-    Var subject  = str_dup_to_var(name);
-    Var contents = contents_for_match(player);
+    Objid ret = AMBIGUOUS;
 
-    listforeach(contents, [&player, &aliases](Var value, int index) -> int {
-        aliases = listappend(aliases, get_aliases(value.obj(), player));
-        return 0;
-    });
+    Var aliases, contents;
+    std::tie(aliases, contents) = contents_for_match(player);
+
+    if(aliases.type != TYPE_LIST || contents.type != TYPE_LIST || aliases.length() != contents.length())
+        return FAILED_MATCH;
 
     Var matches = complex_match(var_ref(subject), var_ref(aliases));
 
@@ -289,10 +323,10 @@ match_contents(Objid player, const char *name)
     else if(matches.type == TYPE_OBJ)
         ret = matches.obj();
 
-    free_var(subject);
     free_var(aliases);
-    free_var(matches);
     free_var(contents);
+    free_var(subject);
+    free_var(matches);
 
     return ret;
 }
@@ -305,13 +339,8 @@ match_object(Objid player, const char *name)
     if (name[0] == '#' && is_programmer(player)) {
         char *p;
         Objid r = strtol(name + 1, &p, 10);
-
-        if (*p != '\0' || !valid(r))
-            return FAILED_MATCH;
-
-        return r;
+        return (*p != '\0' || !valid(r)) ? FAILED_MATCH : r;
     }
-
     if (!valid(player))
         return FAILED_MATCH;
     if (!strcasecmp(name, "me"))
@@ -319,13 +348,13 @@ match_object(Objid player, const char *name)
     if (!strcasecmp(name, "here"))
         return db_object_location(player);
 
-    return match_contents(player, name);
+    return match_contents(player, str_dup_to_var(name));
 }
 
 static package 
 bf_parse_ordinal(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    Var ordinal, tokens = explode(arglist[1], ' ', false);
+    Var ordinal, tokens = explode(var_ref(arglist[1]), ' ', false);
 
     std::tie(ordinal, tokens[1]) = parse_ordinal(tokens[1]);
 
@@ -343,7 +372,7 @@ bf_parse_ordinal(Var arglist, Byte next, void *vdata, Objid progr)
 static package 
 bf_tokenize(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    Var r = prepare_tokens(arglist[1].type == TYPE_LIST ? var_ref(arglist[1]) : explode(arglist[1], ' ', false));
+    Var r = prepare_tokens(var_ref(arglist[1]));
     free_var(arglist);
     return make_var_pack(r);
 }
@@ -360,21 +389,20 @@ bf_complex_match(Var arglist, Byte next, void *vdata, Objid progr)
 
     Var r, matches = r = complex_match(var_ref(arglist[1]), var_ref(arglist[2]));
 
-    if(nargs >= 3 && matches.type != TYPE_OBJ) {
+    if(matches.type != TYPE_OBJ && nargs >= 3) {
         Var items = arglist[3];
-        if(matches.type == TYPE_INT)
+        if(matches.type == TYPE_INT) {
             r = var_ref(items[matches]);
-        else if(matches.type == TYPE_LIST) {
+        } else if(matches.type == TYPE_LIST) {
             r = new_list(matches.length());
             listforeach(matches, [&items, &r](Var value, int index) -> int {
-                r[index] = var_ref(items[index]);
+                r[index] = var_ref(items[value]);
                 return 0;
             });
         }
-
-        free_var(matches);
     }
 
+    free_var(matches);
     free_var(arglist);
     return make_var_pack(r);
 }

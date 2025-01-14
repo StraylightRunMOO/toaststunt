@@ -1002,6 +1002,11 @@ bf_equal(Var arglist, Byte next, void *vdata, Objid progr)
 Var
 explode(Var s, char delim, bool mode) 
 {
+    if(s.length() <= 1 || strchr(s.str(), delim) == NULL) {
+        Var ret = enlist_var(var_dup(s));
+        free_var(s);
+        return ret;
+    } 
 
     char *found, *return_string, *freeme;
     Var ret = new_list(0);
@@ -1019,6 +1024,7 @@ explode(Var s, char delim, bool mode)
         }
     }
 
+    free_var(s);
     free(freeme);
 
     return ret;
@@ -1034,6 +1040,7 @@ bf_explode(Var arglist, Byte next, void *vdata, Objid progr)
 
     Var ret = explode(arglist[1], delim, mode);
 
+    free_var(arglist);
     return make_var_pack(ret);
 }
 
@@ -2018,7 +2025,7 @@ uppercase(Var s) {
 static package
 bf_uppercase(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    Var ret = uppercase(var_ref(arglist[1]));
+    Var ret = uppercase(var_dup(arglist[1]));
     free_var(arglist);
     return make_var_pack(ret);
 }
@@ -2039,7 +2046,7 @@ lowercase(Var s)
 static package
 bf_lowercase(Var arglist, Byte next, void *vdata, Objid progr)
 {
-    Var ret = lowercase(var_ref(arglist[1]));
+    Var ret = lowercase(var_dup(arglist[1]));
     free_var(arglist);
     return make_var_pack(ret);
 }
@@ -2338,6 +2345,8 @@ const char* str_unescape(const char *ptr, int len) {
     free_stream(s);
     return str;
 }
+
+#undef ESC
 
 static package
 bf_str_escape(Var arglist, Byte next, void *vdata, Objid progr) 
