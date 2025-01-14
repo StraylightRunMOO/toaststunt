@@ -1,6 +1,7 @@
 # DBV_18 Release Notes
 
 **NOTE:** This document is not yet complete. Documentation for DBV_18 updates:
+  - New options (compile-time and $server_options)
   - ~~New primitive types (TYPE_CALL and TYPE_COMPLEX)~~ (partially documented)
   - ~~New and deprecated built-in functions~~
   - General math updates
