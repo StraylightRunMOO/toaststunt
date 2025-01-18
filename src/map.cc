@@ -60,6 +60,8 @@ map_compare(const void *a, const void *b, void *udata)
             return std::fabs(lhs.v.fnum - rhs.v.fnum) < EPSILON;
         case TYPE_BOOL:
             return lhs.v.truth != rhs.v.truth;
+        case TYPE_LIST:
+            return !listequal(lhs, rhs, false);
         case TYPE_CALL:
             return !equality(lhs, rhs, false);
         case TYPE_COMPLEX:
@@ -89,6 +91,8 @@ map_hash(const void *item, uint64_t seed0, uint64_t seed1)
         return HASH_FN(&(entry->key.v.err), sizeof(enum error), SEED0, SEED1);
     case TYPE_BOOL:
         return HASH_FN(&(entry->key.v.truth), sizeof(bool), SEED0, SEED1);
+    case TYPE_LIST:
+        return entry->key.hash();
     case TYPE_CALL:
         return entry->key.hash();
     case TYPE_COMPLEX:
@@ -224,7 +228,7 @@ mapkeyadd(Var map, Var key)
         return;
 
     Var key_list = mapkeys(map);
-    key_list = listappend(key_list, var_ref(key));
+    key_list = listappend(key_list, var_dup(key));
     hashmap_set_udata(map.v.map, key_list.v.list);
 }
 
@@ -269,7 +273,7 @@ mapinsert(Var map, Var key, Var value)
      * boundary conditions in the looping logic), and keys that are
      * collections (for which `compare' does not currently work).
      */
-    if (key.type == TYPE_NONE || key.type == TYPE_CLEAR || key.type == TYPE_LIST)
+    if (key.type == TYPE_NONE || key.type == TYPE_CLEAR || key.type == TYPE_MAP)
         panic_moo("MAPINSERT: invalid key");
 
     size_t size_change = (value_bytes(key) + value_bytes(value));

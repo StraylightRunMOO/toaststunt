@@ -26,20 +26,12 @@ int
 ismember(Var lhs, Var rhs, int case_matters)
 {
     if (rhs.type == TYPE_LIST) {
-        int i;
-
-        for (i = 1; i <= rhs.length(); i++) {
-            if (equality(lhs, rhs[i], case_matters)) {
-                return i;
-            }
-        }
-
-        return 0;
+        return listforeach(rhs, [&lhs, &case_matters](Var value, int index) -> int {
+            return equality(value, lhs, case_matters) ? index : 0;
+        });
     } else if (rhs.type == TYPE_MAP) {
         return mapforeach(rhs, [&lhs, &case_matters](Var key, Var value, int index) -> int {
-            if (equality(value, lhs, case_matters))
-                return index;
-            return 0;
+            return equality(value, lhs, case_matters) ? index : 0;
         });
     }
 

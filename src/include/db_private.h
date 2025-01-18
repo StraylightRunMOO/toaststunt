@@ -39,6 +39,14 @@ struct Verbdef {
     Verbdef *next;
 };
 
+/* A better plan may be to make `definer' a `Var', but this should
+ * work.  See `db_verb_definer' for the consequence of this decision.
+ */
+typedef struct verb_handle {        /* non-null db_verb_handles point to these */
+    Var definer;
+    Verbdef *verbdef;
+} verb_handle;
+
 typedef struct Proplist Proplist;
 typedef struct Propdef Propdef;
 

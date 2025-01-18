@@ -444,7 +444,7 @@ compare(Var lhs, Var rhs, int case_matters)
             case TYPE_CALL:
                 {
                 if(lhs.v.call->oid == rhs.v.call->oid)
-                    return strcasecmp(lhs.v.call->verbname, lhs.v.call->verbname);
+                    return strcasecmp(lhs.v.call->verbname.str(), lhs.v.call->verbname.str());
                 }
                 return 0;
             default:
@@ -497,7 +497,7 @@ equality(Var lhs, Var rhs, int case_matters)
             case TYPE_CALL:
                 if(lhs.v.call->ptr == rhs.v.call->ptr)
                     return 1;
-                else if(db_verb_definer(*lhs.v.call) == db_verb_definer(*rhs.v.call) && memo_strlen(lhs.v.call->verbname) == memo_strlen(rhs.v.call->verbname) && !strcasecmp(lhs.v.str, rhs.v.str))
+                else if(db_verb_definer(*lhs.v.call) == db_verb_definer(*rhs.v.call) && memo_strlen(lhs.v.call->verbname.str()) == memo_strlen(rhs.v.call->verbname.str()) && !strcasecmp(lhs.v.str, rhs.v.str))
                     return 1;
                 return 0;
             case TYPE_COMPLEX:

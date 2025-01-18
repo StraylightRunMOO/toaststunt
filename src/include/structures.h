@@ -178,6 +178,7 @@ typedef struct Waif {
 #endif
 } Waif;
 
+typedef struct verb_handle verb_handle;
 typedef struct db_verb_handle db_verb_handle;
 
 Var get_call(Var who, Var verb);
@@ -430,11 +431,19 @@ struct Var {
   operator int() const;
 };
 
+template <>
+struct std::hash<Var> {
+  std::size_t operator()(const Var& v) const {
+    return v.hash();
+  }
+};
+
 struct db_verb_handle {
-    void *ptr;
-    Objid oid;
-    const char *verbname;
-    Var name;
+  verb_handle *ptr;
+  Objid oid;
+  Var verbname;
+
+  verb_handle *handle();
 };
 
 inline Var

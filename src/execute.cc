@@ -731,15 +731,15 @@ call_verb2(Objid recv, const char *vname, Var _this, Var args, int do_pass, bool
     else if (!push_activation())
         return E_MAXREC;
 
-    program = db_verb_program(h);
-    RUN_ACTIV.prog = program_ref(program);
-    RUN_ACTIV._this = var_ref(_this);
-    RUN_ACTIV.progr = db_verb_owner(h);
-    RUN_ACTIV.recv = recv;
-    RUN_ACTIV.vloc = var_ref(db_verb_definer(h));
-    RUN_ACTIV.verb = str_ref(vname);
+    program            = db_verb_program(h);
+    RUN_ACTIV.prog     = program_ref(program);
+    RUN_ACTIV._this    = var_ref(_this);
+    RUN_ACTIV.progr    = db_verb_owner(h);
+    RUN_ACTIV.recv     = recv;
+    RUN_ACTIV.vloc     = var_ref(db_verb_definer(h));
+    RUN_ACTIV.verb     = str_ref(vname);
     RUN_ACTIV.verbname = str_ref(db_verb_names(h));
-    RUN_ACTIV.debug = (db_verb_flags(h) & VF_DEBUG);
+    RUN_ACTIV.debug    = (db_verb_flags(h) & VF_DEBUG);
     RUN_ACTIV.threaded = should_thread;
 
     alloc_rt_stack(&RUN_ACTIV, program->main_vector.max_stack);
@@ -1782,6 +1782,8 @@ finish_comparison:
             }
             break;
 
+
+
             case OP_G_PUT:
             {
                 unsigned id = READ_BYTES(bv, bc.numbytes_var_name);
@@ -2113,13 +2115,13 @@ finish_comparison:
                             free_var(args);
                         } else {
                             STORE_STATE_VARIABLES();
-                            err = call_verb2(definer, h.verbname, Var::new_obj(h.oid), args, 0, DEFAULT_THREAD_MODE);
+                            err = call_verb2(definer, h.verbname.str(), Var::new_obj(h.oid), args, 0, DEFAULT_THREAD_MODE);
                             LOAD_STATE_VARIABLES();
                             if(err == E_VERBNF) {
                                 free_var(obj);
                                 free_var(verb);
                                 obj = Var::new_obj(definer);
-                                verb = str_dup_to_var(h.verbname);
+                                verb = var_dup(h.verbname);
                             }
                         }   
                     } else {

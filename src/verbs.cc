@@ -19,6 +19,7 @@
 
 #include "config.h"
 #include "db.h"
+#include "db_tune.h"
 #include "execute.h"
 #include "functions.h"
 #include "list.h"
@@ -241,7 +242,7 @@ bf_delete_verb(Var arglist, Byte next, void *vdata, Objid progr)
 {   /* (object, verb-desc) */
     Var obj  = arglist[1];
     Var desc = arglist[2];
-    
+
     db_verb_handle h;
     enum error e;
 
@@ -678,6 +679,20 @@ bf_verb_meta(Var arglist, Byte next, void *data, Objid progr)
     return make_var_pack(r);
 }
 
+static package
+bf_verb_cache(Var arglist, Byte next, void *data, Objid progr)
+{
+    // wiz only
+    if(!is_wizard(progr)) {
+        free_var(arglist);
+        return make_error_pack(E_PERM);
+    }
+
+    Var r = db_verb_cache();
+    free_var(arglist);
+    return make_var_pack(r);
+}
+
 void
 register_verbs(void)
 {
@@ -693,4 +708,5 @@ register_verbs(void)
     register_function("set_verb_code", 3,  3, bf_set_verb_code, TYPE_ANY, TYPE_ANY, TYPE_LIST);
     register_function("respond_to",    2,  2, bf_respond_to, TYPE_ANY, TYPE_STR);
     register_function("eval",          1, -1, bf_eval, TYPE_STR);
+    register_function("verb_cache",    0,  0, bf_verb_cache);
 }

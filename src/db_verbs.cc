@@ -38,6 +38,8 @@
 #include "storage.h"
 #include "utils.h"
 
+static Var verb_cache;
+
 /*********** Prepositions ***********/
 
 #define MAXPPHRASE 3        /* max. number of words in a prepositional phrase */
@@ -270,14 +272,6 @@ db_for_all_verbs(Var obj,
 
     return 0;
 }
-
-/* A better plan may be to make `definer' a `Var', but this should
- * work.  See `db_verb_definer' for the consequence of this decision.
- */
-typedef struct {        /* non-null db_verb_handles point to these */
-    Var definer;
-    Verbdef *verbdef;
-} verb_handle;
 
 void
 db_delete_verb(db_verb_handle vh)
@@ -528,7 +522,7 @@ find_callable_verbdef(Object *start, const char *verb)
 
 /* does NOT consume `recv' and `verb' */
 db_verb_handle
-db_find_callable_verb(Var recv, const char *verb)
+db_find_callable_verb2(Var recv, const char *verb)
 {
     if (!recv.is_object())
         panic_moo("DB_FIND_CALLABLE_VERB: Not an object!");
@@ -670,13 +664,203 @@ try_again:
     return vh;
 }
 
+static inline Var alloc_call(Var obj, Var verbname, bool found = true) {
+    db_verb_handle *vh = (db_verb_handle*)mymalloc(sizeof(db_verb_handle), M_CALL);
+    vh->ptr = nullptr;
+    vh->oid = found ? obj.obj() : FAILED_MATCH;
+    vh->verbname = var_dup(verbname);
+
+    Var c;
+    c.type = TYPE_CALL;
+    c.v.call = vh;
+
+    return var_ref(c);
+}
+
+static inline Var cache_timestamp() {
+    using clock     = std::chrono::steady_clock;
+    using duration  = std::chrono::duration<double, std::ratio<1>>;
+    using ms        = std::chrono::time_point<clock, duration>;
+
+    duration t = clock::now().time_since_epoch();
+
+    return Var::new_float(t.count());
+}
+
+static inline void prune_verb_cache() {
+    Var entries = new_list(0);
+    mapforeach(verb_cache, [&entries](Var obj, Var cache, int i) -> int {
+        mapforeach(cache, [&entries, &obj](Var verb, Var entry, int j) -> int {
+            Var item = new_list(3);
+            item[1] = obj;
+            item[2] = var_ref(verb);
+            item[3] = Var::new_float((cache_timestamp().fnum() - entry[3].fnum()) / entry[2].fnum());
+            entries = listappend(entries, item);
+            return 0;
+        });
+        return 0;
+    });
+
+    if(entries.length() > 1) {
+        std::qsort(
+            (void*)&entries.v.list[1],
+            entries.length(),
+            sizeof(Var),
+            [](const void* x, const void* y)
+            {
+                const Var lhs = *static_cast<const Var*>(x);
+                const Var rhs = *static_cast<const Var*>(y);
+                return lhs.v.list[3].fnum() < rhs.v.list[3].fnum() ? -1 : 1;
+            }
+        );
+    }
+
+    int dc = 0;
+    Var current, cache;
+    for(auto i=entries.length(); i > 100; i--) {
+        current = entries[i];
+        const map_entry *m = maplookup(verb_cache, current[1], nullptr, 0);
+        if(m != nullptr && mapdelete(m->value, var_ref(current[2]))) 
+            dc++;
+    }
+
+    entries = sublist(entries, 1, entries.length() - dc);
+
+    free_var(entries);
+}
+
+static inline Var ancestors_with_verbs(Var obj) {
+    Var ancestors = db_ancestors(obj, true);
+    Var r = new_list(0);
+    listforeach(ancestors, [&r](Var value, int index) -> int {
+        Object *o = dbpriv_find_object(value.obj());
+        if(o != nullptr && o->verbdefs != nullptr)
+            r = listappend(r, var_ref(value));
+        return 0;
+    });
+    return var_ref(r);
+}
+
+Var get_entry(Var obj, Var verbname) {
+    Var cache, entry;
+    if(maplookup(verb_cache, obj, &cache, 0) != nullptr && maplookup(cache, verbname, &entry, 0) != nullptr)
+        return entry;
+    else    
+        return Var::new_err(E_VERBNF);
+}
+
+void set_entry(Var obj, Var verbname, Var entry) {
+    Var cache;
+    if(maplookup(verb_cache, obj, &cache, 0) == nullptr) {
+        cache = new_map(0);
+    }
+
+    cache = mapinsert(cache, var_ref(verbname), var_ref(entry));
+    verb_cache = mapinsert(verb_cache, obj, var_ref(cache));
+}
+
+static inline db_verb_handle
+db_verb_cache_find(Var obj, Var verbname)
+{
+    if(verb_cache.v.map == nullptr)
+        verb_cache = new_map(0);
+
+    db_verb_handle vh;
+
+    Var entry = get_entry(obj, verbname);
+    if(entry.type == TYPE_LIST) {
+        vh = *entry[1].v.call;
+        entry[2].v.num++;
+    } else {
+        vh.ptr = nullptr;
+        vh.oid = obj;
+        vh.verbname = var_ref(verbname);
+    }
+
+    return vh;
+}
+
+static inline db_verb_handle
+db_verb_cache_add(Var obj, Var verbname)
+{
+    Var call;
+
+    struct verbdef_definer_data data = find_callable_verbdef(dbpriv_dereference(obj), var_dup(verbname).str());
+
+    if (data.o != nullptr && data.v != nullptr) {
+        obj = Var::new_obj(data.o->id);
+        call = alloc_call(obj, var_dup(verbname), true);
+        verb_handle *h = (verb_handle*)mymalloc(sizeof(verb_handle), M_STRUCT);
+        h->definer = obj;
+        h->verbdef = data.v;
+        call.v.call->ptr = h;
+    } else {
+        call = alloc_call(obj, var_dup(verbname), false);
+    }
+
+    Var entry = new_list(3);
+    entry[1] = var_ref(call);
+    entry[2] = Var::new_int(1);
+    entry[3] = cache_timestamp();
+
+    set_entry(obj, var_dup(verbname), var_dup(entry));
+
+    return *call.v.call;
+}
+
+/* does NOT consume `recv' and `verb' */
+db_verb_handle
+db_find_callable_verb(Var recv, const char *verb)
+{
+    if (!recv.is_object())
+        panic_moo("DB_FIND_CALLABLE_VERB: Not an object!");
+
+    db_verb_handle vh;
+
+    #ifdef VERB_CACHE
+        Var verbname = str_dup_to_var(verb);
+        listforeach(ancestors_with_verbs(recv), [&verbname, &vh](Var value, int index) -> int {
+            vh = db_verb_cache_find(var_dup(value), var_dup(verbname));
+            return vh.ptr || vh.oid == FAILED_MATCH ? 1 : 0;
+        });
+
+        if(vh.oid == FAILED_MATCH) {
+            return vh;
+        } else if(!vh.ptr) {
+            vh = db_verb_cache_add(recv, var_dup(verbname));
+        }
+    #else
+        static verb_handle h;
+        Object *o = (recv.is_object() && is_valid(recv)) ? dbpriv_dereference(recv) : nullptr;
+
+        struct verbdef_definer_data data = find_callable_verbdef(o, verb);
+        if (data.o != nullptr && data.v != nullptr) {
+            h.definer = Var::new_obj(data.o->id);
+            h.verbdef = data.v;
+            vh.ptr = &h;
+            return vh;
+        }
+
+        vh.ptr = nullptr;
+    #endif
+    
+    return vh;
+}
+
+Var db_verb_cache() {
+    Var cache = new_list(2);
+    cache[1] = var_ref(verb_cache);
+    cache[2] = cache_timestamp();
+    return cache;
+}
+
 Var make_call(Objid o, const char *vname) {
     db_verb_handle h = db_find_callable_verb(Var::new_obj(o), vname);
     db_verb_handle *vh = (db_verb_handle*)mymalloc(sizeof(db_verb_handle), M_CALL);
 
     vh->ptr = h.ptr;
     vh->oid = o;
-    vh->verbname = str_dup(vname);
+    vh->verbname = str_dup_to_var(vname);
     
     Var c;
     c.type = TYPE_CALL;
@@ -686,11 +870,7 @@ Var make_call(Objid o, const char *vname) {
 
 bool destroy_call(Var c) {
     db_verb_handle *h = c.v.call;
-    if(h->verbname == nullptr)
-        oklog("not freeing un-initialized verb_handle->verbname\n");
-    else
-        free_str(h->verbname);
-
+    free_var(h->verbname);
     return true;
 }
 

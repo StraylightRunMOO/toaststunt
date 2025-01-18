@@ -20,6 +20,7 @@
 #include <errno.h>
 #include <float.h>
 #include <random>
+#include <chrono>
 #include <algorithm>
 #include <functional>
 #include <fstream>
@@ -60,11 +61,13 @@ splitmix64 new_splitmix64(uint64_t seed = 0) {
 
 static void reseed_rng()
 {
+    /*
     s64 = new_splitmix64();
     std::array<std::uint_fast64_t, std::mt19937_64::state_size> state;
     sysrandom(state.begin(), state.size() * sizeof(std::uint_fast64_t));
     std::seed_seq data(state.begin(), state.end());
     rng.seed(data);
+    */
 }
 
 int
@@ -855,6 +858,23 @@ bf_ctime(Var arglist, Byte next, void *vdata, Objid progr)
 #define CLOCK_MONOTONIC_RAW CLOCK_MONOTONIC
 #endif
 
+enum ftime_mode {
+    NANO   = 4,
+    MICRO  = 5,
+    MILLI  = 6,
+    SECOND = 7,
+    MIN    = 8,
+    HOUR   = 9
+};
+
+// Monotonic Clock
+template<class T>
+static inline Var hr_time() {
+    using clock = std::chrono::steady_clock;
+    T ff = clock::now().time_since_epoch();
+    return Var::new_float(ff.count());
+}
+
 /* Returns a float representing seconds and nanoseconds since the Epoch.
    Optional arguments specify monotonic time; 1: Monotonic. 2. Monotonic raw.
    (seconds since an arbitrary period of time. More useful for timing
@@ -862,6 +882,44 @@ bf_ctime(Var arglist, Byte next, void *vdata, Objid progr)
 static package
 bf_ftime(Var arglist, Byte next, void *vdata, Objid progr)
 {
+    using NS = std::chrono::duration<double, std::nano>;
+    using US = std::chrono::duration<double, std::micro>;
+    using MS = std::chrono::duration<double, std::milli>;
+    using SS = std::chrono::duration<double, std::ratio<1>>;
+    using MM = std::chrono::duration<double, std::ratio<60>>;
+    using HH = std::chrono::duration<double, std::ratio<3600>>;
+
+    auto nargs = arglist.length();
+    if(nargs >= 1 && arglist[1].num() >= 4) {
+
+        Var tt;
+        enum ftime_mode fmode = static_cast<enum ftime_mode>(arglist[1].num());
+
+        switch(fmode) {
+        case NANO:
+            tt = hr_time<NS>();
+            break;
+        case MICRO:
+            tt = hr_time<US>();
+            break;
+        case MILLI:
+            tt = hr_time<MS>();
+            break;
+        case SECOND:
+            tt = hr_time<SS>();
+            break;
+        case MIN:
+            tt = hr_time<MM>();
+            break;
+        case HOUR:
+            tt = hr_time<HH>();
+            break;
+        }
+
+        free_var(arglist);
+        return make_var_pack(tt);
+    }
+
 #ifdef __MACH__
     // macOS only provides SYSTEM_CLOCK for monotonic time, so our arguments don't matter.
     clock_id_t clock_type = (arglist.length() == 0 ? CALENDAR_CLOCK : SYSTEM_CLOCK);

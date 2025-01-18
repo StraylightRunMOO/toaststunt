@@ -470,7 +470,7 @@ dbio_write_var(Var v)
             break;
         case TYPE_CALL:
             dbio_write_objid(v.v.call->oid);
-            dbio_write_string(v.v.call->verbname);
+            dbio_write_string(v.v.call->verbname.str());
             break;
         case TYPE_COMPLEX:
             dbio_write_float(v.v.complex.real());

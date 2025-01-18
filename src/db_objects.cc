@@ -52,7 +52,7 @@ static std::unordered_map <Objid, Object*> memento_objects;
 static std::atomic_int memento_count = MEMENTO_HIGHEST_OBJ;
 
 #ifdef USE_ANCESTOR_CACHE
-static std::unordered_map <int, Var> ancestor_cache;
+static Var ancestor_cache;
 #endif /* USE_ANCESTOR_CACHE */
 
 /* used in graph traversals */
@@ -60,6 +60,10 @@ static unsigned char *bit_array;
 static size_t array_size = 0;
 
 /*********** Objects qua objects ***********/
+
+Object** dbpriv_objects() {
+    return objects;
+}
 
 static inline bool 
 memento(Objid oid)
@@ -101,7 +105,6 @@ db_reset_last_used_objid(void)
 {
     while (!objects[num_objects - 1])
         num_objects--;
-    db_clear_ancestor_cache();
 }
 
 void
@@ -268,6 +271,25 @@ dbpriv_new_recycled_object(void)
     num_objects++;
 }
 
+#ifdef USE_ANCESTOR_CACHE
+static inline void ancestor_cache_invalidate(Var obj) {
+    Var deleted_keys = new_list(0);
+
+    mapforeach(ancestor_cache, [&obj, &deleted_keys](Var key, Var value, int index) -> int {
+        if(ismember(obj, key, false) || ismember(obj, value, false)) {
+            deleted_keys = listappend(deleted_keys, var_ref(key));
+        }
+        return 0;
+    });
+
+    listforeach(deleted_keys, [](Var value, int index) -> int {
+        mapdelete(ancestor_cache, value);
+        return 0;
+    });
+    
+    free_var(deleted_keys);
+}
+#endif
 
 static Var unmoved;
 
@@ -348,15 +370,8 @@ db_create_object(Num new_objid)
 void db_destroy_memento_object(Objid oid) {
     Object *o = dbpriv_find_object(oid);
 
-    if (!o)
+    if (!o) 
         panic_moo("DB_DESTROY_MEMENTO_OBJECT: Invalid object!");
-
-    #ifdef USE_ANCESTOR_CACHE
-    if (ancestor_cache.count(oid) > 0) {
-        free_var(ancestor_cache[oid]);
-        ancestor_cache.erase(oid);
-    }
-    #endif
 
     free_str(o->name);
     free_var(o->parents);
@@ -395,7 +410,6 @@ void db_destroy_memento_object(Objid oid) {
     }
     
     myfree(memento_objects[oid], M_OBJECT);
-
     memento_objects.erase(oid);
 }
 
@@ -481,10 +495,13 @@ db_destroy_object(Objid oid)
         myfree(v, M_VERBDEF);
     }
 
+#ifdef USE_ANCESTOR_CACHE
+    ancestor_cache_invalidate(Var::new_obj(oid));
+#endif
+
     myfree(objects[oid], M_OBJECT);
     objects[oid] = nullptr;
 }
-
 
 Var
 db_read_anonymous()
@@ -650,9 +667,7 @@ anon_valid(Object *o)
 int
 is_valid(Var obj)
 {
-    return (TYPE_ANON == obj.type) ?
-           anon_valid(obj.v.anon) :
-           valid(obj.v.obj);
+    return valid(obj.v.obj);
 }
 
 Objid
@@ -662,7 +677,7 @@ db_renumber_object(Objid old)
     Object *o;
 
 #ifdef USE_ANCESTOR_CACHE
-    db_clear_ancestor_cache();
+    ancestor_cache_invalidate(Var::new_obj(old));
 #endif /* USE_ANCESTOR_CACHE */
 
     for (_new = 0; _new < old; _new++) {
@@ -896,7 +911,7 @@ dbpriv_children(Var v)
     if(o == nullptr) return new_list(0);
 
     if(o->children.type != TYPE_LIST)
-        o->children = enlist_var(o->children);
+        o->children = new_list(0);
 
     return o->children;
 }
@@ -915,17 +930,17 @@ dbpriv_parents(Object *o)
 }
 
 static inline Var
-db_all_ancestors(Var o, bool full) 
+db_all_ancestors(Var o) 
 {
     using queue = std::queue<Objid>;
-    Var parents;
-    Var ancestors;
+
+    if(o.type != TYPE_OBJ || !valid(o))
+        return new_list(0);
 
     queue q;
-    if(o.type == TYPE_OBJ) q.push(o.obj());
+    q.push(o.obj());
 
-    ancestors = new_list(1);
-    ancestors[1] = o;
+    Var parents, ancestors = enlist_var(o);
 
     while(!q.empty()) {        
         parents = var_ref(dbpriv_parents(dbpriv_find_object(q.front())));
@@ -945,6 +960,34 @@ db_all_ancestors(Var o, bool full)
 
     return ancestors;
 }
+
+#ifdef USE_ANCESTOR_CACHE
+
+static inline Var db_all_ancestors_cached(Var obj) {
+    if(ancestor_cache.v.map == nullptr)
+        ancestor_cache = new_map(0);
+
+    Object *o = dbpriv_dereference(obj);
+    Var ancestors, parents = var_dup(o->parents);
+
+    if(!maphaskey(ancestor_cache, parents)) {
+        ancestors      = db_all_ancestors(obj);
+        ancestors[1]   = Var::new_obj(NOTHING);
+        ancestor_cache = mapinsert(ancestor_cache, parents, ancestors);
+    }
+
+    if(maplookup(ancestor_cache, parents, &ancestors, 0) == nullptr) {
+        ancestors = new_list(0);
+        free_var(parents);
+    } else {
+        ancestors    = var_ref(ancestors);
+        ancestors[1] = obj;
+    }
+
+    return ancestors;
+}
+
+#endif
 
 Var 
 db_all_contents(Var o, Var parent)
@@ -983,23 +1026,13 @@ db_all_locations(Var obj, bool full) {
 Var 
 db_ancestors(Var obj, bool full)
 {
-    Var ancestors;
-    Object *o = dbpriv_dereference(obj);
-
-#ifdef USE_ANCESTOR_CACHE
     if(obj.obj() > max_objects || obj.obj() <= memento_count || !is_valid(obj))
         return new_list(0);
 
-    if (ancestor_cache.count(obj.obj()) == 0) {
-        ancestors = db_all_ancestors(obj, true);
-        if(ancestors.length() >= 2)
-            ancestor_cache[obj.obj()] = var_ref(ancestors);
-    } else {
-        ancestors = var_ref(ancestor_cache[obj.obj()]);
-    }
-    
+#ifdef USE_ANCESTOR_CACHE
+    Var ancestors = db_all_ancestors_cached(obj);    
 #else
-    ancestors = db_all_ancestors(obj, true);
+    Var ancestors = db_all_ancestors(obj);
 #endif
 
     if(!full) {
@@ -1229,10 +1262,7 @@ db_change_parents(Var obj, Var new_parents, Var anon_kids)
     /* save this; we need it later */
     Var old_ancestors = db_ancestors(obj, true);
 
-    /* only adjust the parent's children for permanent objects */
-
-    /* only adjust the parent's children for permanent objects */
-    if (TYPE_OBJ == obj.type) { // && !memento(obj.v.obj)) {
+    if (TYPE_OBJ == obj.type) {
         Var parent;
         int i, c;
 
@@ -1262,21 +1292,8 @@ db_change_parents(Var obj, Var new_parents, Var anon_kids)
 
 #ifdef USE_ANCESTOR_CACHE
     /* Invalidate the cache for all descendants of the object that is changing parents. */
-    Var desc;
-    int i, c;
-
-    if(obj.type == TYPE_OBJ) {
-        Var descendants = db_descendants(obj, true);
-        FOR_EACH(desc, descendants, i, c) {
-            if (ancestor_cache.count(desc.v.obj) > 0) {
-                if (var_refcount(ancestor_cache[desc.v.obj]) > 1)
-                    applog(LOG_ERROR, "Refcount too high for ancestor cache invalidation of #%i. Refcount = %i\n", desc.v.obj, var_refcount(ancestor_cache[desc.v.obj]));
-                free_var(ancestor_cache[desc.v.obj]);
-                ancestor_cache.erase(desc.v.obj);
-            }
-        }
-        free_var(descendants);
-    }
+    if(obj.type == TYPE_OBJ)
+        ancestor_cache_invalidate(obj);
 #endif /* USE_ANCESTOR_CACHE */
 
     Var new_ancestors = db_ancestors(obj, true);
@@ -1516,8 +1533,7 @@ void
 db_clear_ancestor_cache(void)
 {
 #ifdef USE_ANCESTOR_CACHE /*Just in case */
-    for (auto const& x : ancestor_cache)
-        free_var(x.second);
-    ancestor_cache.clear();
+    free_var(ancestor_cache);
+    ancestor_cache.v.map = nullptr;
 #endif
 }

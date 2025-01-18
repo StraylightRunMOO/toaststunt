@@ -585,7 +585,7 @@ stream_add_tostr(Stream * s, Var v)
         case TYPE_CALL: 
         {
             Var c = corified_as(Var::new_obj(v.v.call->oid), 0);
-            stream_printf(s, "%s::%s", c.str(), v.v.call->verbname);
+            stream_printf(s, "%s::%s", c.str(), v.v.call->verbname.str());
             free_var(c);
         }
         break;
@@ -708,7 +708,7 @@ unparse_value(Stream * s, Var v)
         case TYPE_CALL:
         {
             Var c = corified_as(Var::new_obj(v.v.call->oid), 0);
-            stream_printf(s, "%s::%s", c.str(), v.v.call->verbname);
+            stream_printf(s, "%s::%s", c.str(), v.v.call->verbname.str());
             free_var(c);
         }
         break;
@@ -827,6 +827,8 @@ substr(Var str, int lower, int upper)
         if(lower == upper)
             s[index++] = str.v.str[lower-1];
         else {
+            lower = std::max(lower, 1);
+            upper = std::min(upper, static_cast<int>(memo_strlen(str.v.str)));
             if(!reverse) {
                 for (loop = lower - 1; loop < upper; loop++)
                     s[index++] = str.v.str[loop];
@@ -841,7 +843,7 @@ substr(Var str, int lower, int upper)
     }
 
     free_var(str);
-    return r;
+    return var_ref(r);
 }
 
 Var
@@ -2405,7 +2407,7 @@ bf_map_args(Var arglist, Byte next, void *vdata, Objid progr)
     Var definer = db_verb_definer(h);
     Var this_ = Var::new_obj(h.oid);
 
-    e = call_verb2(definer.obj(), h.verbname, is_valid(this_) ? this_ : definer, call_args, 0, DEFAULT_THREAD_MODE);
+    e = call_verb2(definer.obj(), h.verbname.str(), is_valid(this_) ? this_ : definer, call_args, 0, DEFAULT_THREAD_MODE);
 
     return make_call_pack(++next, data);
 }
