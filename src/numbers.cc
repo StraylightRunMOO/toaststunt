@@ -61,13 +61,11 @@ splitmix64 new_splitmix64(uint64_t seed = 0) {
 
 static void reseed_rng()
 {
-    /*
     s64 = new_splitmix64();
     std::array<std::uint_fast64_t, std::mt19937_64::state_size> state;
     sysrandom(state.begin(), state.size() * sizeof(std::uint_fast64_t));
     std::seed_seq data(state.begin(), state.end());
     rng.seed(data);
-    */
 }
 
 int
